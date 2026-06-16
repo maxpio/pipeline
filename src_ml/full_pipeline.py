@@ -1,12 +1,13 @@
 """
-Full end-to-end pipeline for a single instance:
-  1. Extract LP relaxation features from a .lp file (using PySCIPOpt)
-  2. Build the bipartite graph and predict dual values with the trained GNN model
-  3. Save the predicted duals to a file
-  4. Run GCG with the custom pricing plugin that uses the predicted duals
+Full end-to-end pipeline for batch instance processing:
+  1. Scan lp_dir for .lp files, sample by instance_ratio, union with required_instances
+  2. For each instance: extract LP relaxation features (PySCIPOpt)
+  3. Build the bipartite graph and predict dual values with the trained GNN model
+  4. Save the predicted duals to a file
+  5. Run GCG with the custom pricing plugin that uses the predicted duals
 
 Usage:
-    python -m src_ml.full_pipeline <lp_file> <dec_file> [--weights <path>] [--gcg <path>] [--timeout <seconds>]
+    python -m src_ml.full_pipeline [--lp-dir <dir>] [--dec-dir <dir>] [--instance-ratio 0.1] [--required-instances e10100-1.lp]
 """
 
 import os
@@ -52,7 +53,26 @@ DEFAULT_GCG_EXECUTABLE = config['paths'].get('gcg_executable', "/home/max/gcg/bu
 
 # ========================== STEP 1: Feature Extraction ==========================
 
-def extract_features_single(lp_file: str) -> dict:
+def get_master_constraints(dec_file: str) -> set:
+    """Parses a .dec file and returns a set of constraint names in the MASTERCONSS block."""
+    master_conss = set()
+    with open(dec_file, 'r') as f:
+        in_master = False
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line == "MASTERCONSS":
+                in_master = True
+                continue
+            if line == "MASTERVARS" or line.startswith("BLOCK "):
+                in_master = False
+                continue
+            if in_master:
+                master_conss.add(line)
+    return master_conss
+
+def extract_features_single(lp_file: str, dec_file: str, quiet: bool = False) -> dict:
     """
     Extracts LP relaxation features from a single .lp file using PySCIPOpt.
     Returns the feature dictionary (same schema as lp_to_json_general.py output).
@@ -62,8 +82,11 @@ def extract_features_single(lp_file: str) -> dict:
       - "constraints": { cons_name: {rhs, eq, dualized, pi}, ... }
       - "edges": [ {c, v, coeff}, ... ]
     """
-    print(f"[Step 1] Extracting LP relaxation features from: {lp_file}")
+    if not quiet:
+        print(f"[Step 1] Extracting LP relaxation features from: {lp_file}")
     start = time.time()
+
+    master_conss = get_master_constraints(dec_file)
 
     model = SCIPModel("FeatureExtractor")
     model.hideOutput()
@@ -98,7 +121,7 @@ def extract_features_single(lp_file: str) -> dict:
         constraints_dict[c_name] = {
             "rhs": c_rhs,
             "eq": is_eq,
-            "dualized": 1 if "hard" in c_name.lower() else 0
+            "dualized": 1 if c_name in master_conss else 0
         }
 
         # Matrix coefficient extraction
@@ -127,7 +150,8 @@ def extract_features_single(lp_file: str) -> dict:
             except:
                 constraints_dict[cons.name]["pi"] = 0.0
     else:
-        print(f"  Warning: LP relaxation status is '{model.getStatus()}', features may be incomplete.")
+        if not quiet:
+            print(f"  Warning: LP relaxation status is '{model.getStatus()}', features may be incomplete.")
         # Fill in defaults so the graph can still be built
         for v_name in variables_dict:
             variables_dict[v_name].setdefault("lpr_val", 0.0)
@@ -138,8 +162,9 @@ def extract_features_single(lp_file: str) -> dict:
 
     model.freeProb()
     elapsed = time.time() - start
-    print(f"  Feature extraction done in {elapsed:.2f}s  "
-          f"({len(variables_dict)} vars, {len(constraints_dict)} cons, {len(edges_list)} edges)")
+    if not quiet:
+        print(f"  Feature extraction done in {elapsed:.2f}s  "
+              f"({len(variables_dict)} vars, {len(constraints_dict)} cons, {len(edges_list)} edges)")
 
     return {
         "variables": variables_dict,
@@ -150,7 +175,7 @@ def extract_features_single(lp_file: str) -> dict:
 
 # ========================== STEP 2: ML Prediction ==========================
 
-def predict_duals(feature_dict: dict, weights_path: str) -> tuple[dict, str]:
+def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) -> tuple[dict, str]:
     """
     Builds the bipartite graph from the feature dictionary, loads the trained
     GNN model, and predicts Lagrangian dual multipliers.
@@ -159,7 +184,8 @@ def predict_duals(feature_dict: dict, weights_path: str) -> tuple[dict, str]:
         (mult_dict, dual_txt)  — a dict {constraint_name: value} and a
         pre-formatted string ready to be written to a .txt file.
     """
-    print(f"[Step 2] Predicting dual values with ML model ({weights_path})")
+    if not quiet:
+        print(f"[Step 2] Predicting dual values with ML model ({weights_path})")
     start = time.time()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -213,7 +239,8 @@ def predict_duals(feature_dict: dict, weights_path: str) -> tuple[dict, str]:
     dual_txt = "\n".join(lines) + "\n"
 
     elapsed = time.time() - start
-    print(f"  Predicted {len(mult_dict)} dual multipliers in {elapsed:.2f}s")
+    if not quiet:
+        print(f"  Predicted {len(mult_dict)} dual multipliers in {elapsed:.2f}s")
 
     return mult_dict, dual_txt
 
@@ -229,16 +256,18 @@ def run_gcg_with_duals(
     timeout: int = 3600,
     log_file: Path | None = None,
     save_logs: bool = True,
-    print_solver_output: bool = True
+    print_solver_output: bool = True,
+    quiet: bool = False
 ) -> tuple[str, float, float, int]:
     """
     Constructs the GCG command string with the custom pricing plugin settings
     and runs the solver.  Returns (status, exec_time, obj_val, mlp_iters).
     """
-    print(f"[Step 3] Running GCG with predicted duals")
-    print(f"  LP:   {lp_file}")
-    print(f"  DEC:  {dec_file}")
-    print(f"  DUAL: {dual_file}")
+    if not quiet:
+        print(f"[Step 3] Running GCG with predicted duals")
+        print(f"  LP:   {lp_file}")
+        print(f"  DEC:  {dec_file}")
+        print(f"  DUAL: {dual_file}")
 
     cmd_string = (
         ("set heuristics emphasis off\n" if experiment_params.get('disable_heuristics', True) else "") +
@@ -278,14 +307,82 @@ def run_gcg_with_duals(
     )
 
 
+# ========================== Parallel Workers ==========================
+
+def _extract_wrapper(args_tuple):
+    """Worker for ProcessPoolExecutor — extracts features for one instance."""
+    lp_path, dec_path = args_tuple
+    return extract_features_single(str(lp_path), str(dec_path), quiet=True)
+
+
+def _gcg_wrapper(args_tuple):
+    """Worker for ProcessPoolExecutor — runs GCG for one instance."""
+    lp_f, dec_f, dual_f, gcg_exe, exp_params, tout, log_f, save_l = args_tuple
+    return run_gcg_with_duals(
+        lp_file=lp_f, dec_file=dec_f, dual_file=dual_f,
+        gcg_executable=gcg_exe, experiment_params=exp_params,
+        timeout=tout, log_file=log_f, save_logs=save_l,
+        print_solver_output=False, quiet=True
+    )
+
+
 # ========================== Main ==========================
+
+def resolve_instance_list(
+    lp_dir: Path,
+    instance_ratio: float,
+    required_instances: list[str],
+    random_seed: int | None = None,
+) -> list[Path]:
+    """
+    Collect the list of .lp files to run, based on:
+      1. All .lp files found in *lp_dir*.
+      2. A random sample of *instance_ratio* of those files.
+      3. Union with *required_instances* (filenames) which are always included.
+    """
+    import random
+
+    all_lp_files = sorted(lp_dir.glob("*.lp"))
+    if not all_lp_files:
+        sys.exit(f"Error: No .lp files found in {lp_dir}")
+
+    # --- required instances (always included) ---
+    required_set: set[str] = set(required_instances or [])
+    required_paths = [f for f in all_lp_files if f.name in required_set]
+
+    missing = required_set - {f.name for f in required_paths}
+    if missing:
+        print(f"  Warning: required instances not found in {lp_dir}: {missing}")
+
+    # --- random sample based on ratio ---
+    remaining = [f for f in all_lp_files if f.name not in required_set]
+    n_sample = max(0, int(len(remaining) * instance_ratio))
+
+    if random_seed is not None:
+        random.seed(random_seed)
+    sampled = sorted(random.sample(remaining, n_sample)) if n_sample > 0 else []
+
+    # Union: required first, then sampled (sorted for reproducibility)
+    result = sorted(set(required_paths + sampled), key=lambda p: p.name)
+    return result
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="End-to-end pipeline: extract features → predict duals → run GCG"
+        description="End-to-end pipeline: extract features → predict duals → run GCG (batch mode)"
     )
-    parser.add_argument("lp_file", type=Path, help="Path to the .lp file")
-    parser.add_argument("dec_file", type=Path, help="Path to the .dec file")
+    parser.add_argument("--lp-dir", type=Path,
+                        default=config['pipeline_settings'].get('lp_dir'),
+                        help="Directory containing .lp files")
+    parser.add_argument("--dec-dir", type=Path,
+                        default=config['pipeline_settings'].get('dec_dir'),
+                        help="Directory containing .dec files")
+    parser.add_argument("--instance-ratio", type=float,
+                        default=config['pipeline_settings'].get('instance_ratio', 1.0),
+                        help="Ratio (0.0–1.0) of instances to process from lp_dir")
+    parser.add_argument("--required-instances", nargs='*',
+                        default=config['pipeline_settings'].get('required_instances', []),
+                        help="Filenames that must always be included (e.g. e10100-1.lp)")
     parser.add_argument("--weights", type=Path, default=Path(DEFAULT_WEIGHTS_PATH),
                         help="Path to trained model weights (.pth)")
     parser.add_argument("--gcg", type=Path, default=Path(DEFAULT_GCG_EXECUTABLE),
@@ -293,76 +390,303 @@ def main():
     parser.add_argument("--timeout", type=int, default=config['pipeline_settings'].get('timeout', 3600),
                         help=f"Max solving time in seconds (default: {config['pipeline_settings'].get('timeout', 3600)})")
     parser.add_argument("--output-dir", type=Path, default=None,
-                        help="Directory for predicted duals and logs (default: next to .lp file)")
+                        help="Directory for predicted duals and logs (default: project dirs)")
     parser.add_argument("--no-logs", action="store_true",
                         help="Do not save GCG log output")
     parser.add_argument("--quiet", action="store_true",
                         help="Do not print GCG solver output to console")
+    parser.add_argument("--seed", type=int,
+                        default=config['pipeline_settings'].get('random_seed', 42),
+                        help="Random seed for instance sampling")
+    parser.add_argument("--num-cores", type=int,
+                        default=config['pipeline_settings'].get('num_cores', 1),
+                        help="CPU cores for parallel feature extraction and GCG solving")
+    parser.add_argument("--gpu-batch-size", type=int,
+                        default=config['pipeline_settings'].get('gpu_batch_size', 16),
+                        help="Number of instances to predict duals for in one GPU batch")
     args = parser.parse_args()
 
-    lp_file = args.lp_file.resolve()
-    dec_file = args.dec_file.resolve()
+    if args.lp_dir is None:
+        sys.exit("Error: lp_dir not provided in arguments or config.yaml")
+    if args.dec_dir is None:
+        sys.exit("Error: dec_dir not provided in arguments or config.yaml")
 
-    if not lp_file.exists():
-        sys.exit(f"Error: LP file not found: {lp_file}")
-    if not dec_file.exists():
-        sys.exit(f"Error: DEC file not found: {dec_file}")
+    lp_dir = Path(args.lp_dir).resolve()
+    dec_dir = Path(args.dec_dir).resolve()
+
+    if not lp_dir.is_dir():
+        sys.exit(f"Error: LP directory not found: {lp_dir}")
+    if not dec_dir.is_dir():
+        sys.exit(f"Error: DEC directory not found: {dec_dir}")
     if not args.weights.exists():
         sys.exit(f"Error: Model weights not found: {args.weights}")
     if not args.gcg.exists():
         sys.exit(f"Error: GCG executable not found: {args.gcg}")
 
-    instance_name = lp_file.stem
-    output_dir = args.output_dir or lp_file.parent
-    output_dir = Path(output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print("=" * 70)
-    print(f"  Full Pipeline — {instance_name}")
-    print("=" * 70)
-
-    # ---- Step 1: Feature extraction ----
-    feature_dict = extract_features_single(str(lp_file))
-
-    # ---- Step 2: ML prediction ----
-    mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights))
-
-    dual_file = output_dir / f"{instance_name}_predicted_duals.txt"
-    with open(dual_file, 'w') as f:
-        f.write(dual_txt)
-    print(f"  Predicted duals saved to: {dual_file}")
-
-    # ---- Step 3: Run GCG with predicted duals ----
-    log_file = output_dir / f"{instance_name}_gcg.log"
-
-    experiment_params = config.get('gcg_settings', {})
-
-    status, exec_time, obj_val, mlp_iters = run_gcg_with_duals(
-        lp_file=lp_file,
-        dec_file=dec_file,
-        dual_file=dual_file,
-        gcg_executable=args.gcg,
-        experiment_params=experiment_params,
-        timeout=args.timeout,
-        log_file=log_file,
-        save_logs=not args.no_logs,
-        print_solver_output=not args.quiet
+    # Resolve which instances to run
+    instance_files = resolve_instance_list(
+        lp_dir=lp_dir,
+        instance_ratio=args.instance_ratio,
+        required_instances=args.required_instances,
+        random_seed=args.seed,
     )
 
-    # ---- Summary ----
-    print("\n" + "=" * 70)
-    print("  Pipeline Results")
+    # Build (lp_file, dec_file) pairs, filtering out missing .dec files
+    instance_pairs = []
+    for lp_file in instance_files:
+        dec_file = dec_dir / f"{lp_file.stem}.dec"
+        if not dec_file.exists():
+            print(f"  [!] Skipping {lp_file.stem}: no matching .dec file at {dec_file}")
+            continue
+        instance_pairs.append((lp_file, dec_file))
+
+    n_instances = len(instance_pairs)
+    is_batch = n_instances > 1
+    num_cores = min(args.num_cores, n_instances) if is_batch else 1
+
     print("=" * 70)
-    print(f"  Instance:        {instance_name}")
-    print(f"  Status:          {status}")
-    print(f"  Execution Time:  {exec_time:.2f}s")
-    print(f"  Objective Value: {obj_val}")
-    print(f"  MLP Iterations:  {mlp_iters}")
-    if not args.no_logs:
-        print(f"  GCG Log:         {log_file}")
-    print(f"  Predicted Duals: {dual_file}")
+    print(f"  Full Pipeline — Batch Mode")
+    print(f"  LP dir:    {lp_dir}")
+    print(f"  DEC dir:   {dec_dir}")
+    print(f"  Instances: {n_instances} selected "
+          f"(ratio={args.instance_ratio}, required={len(args.required_instances or [])})")
+    if is_batch:
+        print(f"  Cores:     {num_cores}  |  GPU batch size: {args.gpu_batch_size}")
+    print("=" * 70)
+
+    # Output dirs
+    duals_dir_cfg = config['paths'].get('duals_dir')
+    dual_dir = (Path(BASE_DIR) / duals_dir_cfg).resolve() if duals_dir_cfg else (args.output_dir or lp_dir)
+    dual_dir = Path(dual_dir).resolve()
+    dual_dir.mkdir(parents=True, exist_ok=True)
+
+    log_dir_cfg = config['paths'].get('log_dir')
+    log_dir = (Path(BASE_DIR) / log_dir_cfg).resolve() if log_dir_cfg else (args.output_dir or lp_dir)
+    log_dir = Path(log_dir).resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    experiment_params = config.get('gcg_settings', {})
+    pipeline_start = time.time()
+
+    # ====================================================================
+    #  SINGLE-INSTANCE PATH  (no parallelization overhead)
+    # ====================================================================
+    if not is_batch:
+        lp_file, dec_file = instance_pairs[0]
+        instance_name = lp_file.stem
+
+        print(f"\n{'=' * 70}")
+        print(f"  Instance: {instance_name}")
+        print("=" * 70)
+
+        feature_dict = extract_features_single(str(lp_file), str(dec_file), quiet=args.quiet)
+        mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
+
+        dual_file = dual_dir / f"{instance_name}_predicted_duals.txt"
+        with open(dual_file, 'w') as f:
+            f.write(dual_txt)
+        if not args.quiet:
+            print(f"  Predicted duals saved to: {dual_file}")
+
+        log_file = log_dir / f"{instance_name}_gcg.log"
+        status, exec_time, obj_val, mlp_iters = run_gcg_with_duals(
+            lp_file=lp_file, dec_file=dec_file, dual_file=dual_file,
+            gcg_executable=args.gcg, experiment_params=experiment_params,
+            timeout=args.timeout, log_file=log_file,
+            save_logs=not args.no_logs, print_solver_output=not args.quiet,
+            quiet=args.quiet
+        )
+
+        pipeline_elapsed = time.time() - pipeline_start
+        print(f"\n{'=' * 70}")
+        print("  Pipeline Results")
+        print("=" * 70)
+        print(f"  Instance:        {instance_name}")
+        print(f"  Status:          {status}")
+        print(f"  Execution Time:  {exec_time:.2f}s")
+        print(f"  Objective Value: {obj_val}")
+        print(f"  MLP Iterations:  {mlp_iters}")
+        print(f"\n  Total wall-clock time: {pipeline_elapsed:.2f}s")
+        print("=" * 70)
+        return
+
+    # ====================================================================
+    #  BATCH PATH  (parallel feature extraction, batched GPU, parallel GCG)
+    # ====================================================================
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    import tempfile as _tempfile
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Load model once
+    model = LagrangianMultiplierModel(
+        feature_embedding_size=FEATURE_EMBEDDING_SIZE,
+        encoder_mlp_dims=ENCODER_MLP_DIMS,
+        gnn_mlp_dims=GNN_MLP_DIMS,
+        num_layers=NUM_LAYERS,
+        decoder_mlp_dims=DECODER_MLP_DIMS,
+        dropout=DROPOUT
+    ).to(device)
+    model.load_state_dict(torch.load(str(args.weights), map_location=device))
+    model.eval()
+
+    all_results = []
+    batch_size = args.gpu_batch_size
+
+    for batch_start in range(0, len(instance_pairs), batch_size):
+        batch_end = min(batch_start + batch_size, len(instance_pairs))
+        chunk_pairs = instance_pairs[batch_start:batch_end]
+        chunk_names = [lp.stem for lp, _ in chunk_pairs]
+        n_chunk = len(chunk_pairs)
+
+        print(f"\n{'=' * 50}")
+        print(f"  Processing Batch {(batch_start//batch_size) + 1} "
+              f"(Instances {batch_start+1}–{batch_end} / {len(instance_pairs)})")
+        print(f"{'=' * 50}")
+
+        # ---- Phase 1: Parallel feature extraction ----
+        print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
+        phase1_start = time.time()
+        feature_dicts: dict[str, dict] = {}
+        with ProcessPoolExecutor(max_workers=num_cores) as pool:
+            future_to_name = {
+                pool.submit(_extract_wrapper, pair): pair[0].stem
+                for pair in chunk_pairs
+            }
+            done_count = 0
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                done_count += 1
+                try:
+                    feature_dicts[name] = future.result()
+                    # print(f"    [{done_count}/{n_chunk}] extracted: {name}")
+                except Exception as exc:
+                    print(f"    [!] FAILED extraction: {name} — {exc}")
+
+        phase1_elapsed = time.time() - phase1_start
+        print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
+
+        # ---- Phase 2: Batched GPU prediction ----
+        print(f"  Phase 2: Predicting duals (GPU) ...")
+        phase2_start = time.time()
+        
+        ordered_names = [n for n in chunk_names if n in feature_dicts]
+        graphs = []
+        cons_names_per_instance = []
+        for name in ordered_names:
+            fd_dict = feature_dicts[name]
+            fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(fd_dict, f)
+                graph_data = create_bipartite_graph(tmp_json).to(device)
+            finally:
+                if os.path.exists(tmp_json):
+                    os.remove(tmp_json)
+            graphs.append(graph_data)
+            cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
+
+        dual_files: dict[str, Path] = {}
+        if graphs:
+            with torch.no_grad():
+                batch_data = Batch.from_data_list(graphs).to(device)
+                lambda_raw, dualized_mask, eq_flags = model(batch_data)
+                actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+
+            # Un-batch predictions
+            actual_multipliers_cpu = actual_multipliers.cpu()
+            mask_cpu = dualized_mask.cpu()
+            
+            if hasattr(batch_data['constraint'], 'batch') and batch_data['constraint'].batch is not None:
+                cons_batch_indices = batch_data['constraint'].batch.cpu()
+            else:
+                cons_batch_indices = torch.zeros(len(mask_cpu), dtype=torch.long)
+                
+            dualized_batch_indices = cons_batch_indices[mask_cpu]
+
+            for i, name in enumerate(ordered_names):
+                idx_mask = (cons_batch_indices == i)
+                idx_mask_dual = (dualized_batch_indices == i)
+                
+                inst_mults = actual_multipliers_cpu[idx_mask_dual].tolist()
+                inst_mask = mask_cpu[idx_mask].tolist()
+                all_cons = cons_names_per_instance[i]
+
+                dualized_names = [cname for j, cname in enumerate(all_cons) if inst_mask[j]]
+                mult_dict = dict(zip(dualized_names, inst_mults))
+
+                lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
+                dual_txt = "\n".join(lines) + "\n"
+
+                dual_file = dual_dir / f"{name}_predicted_duals.txt"
+                with open(dual_file, 'w') as f:
+                    f.write(dual_txt)
+                dual_files[name] = dual_file
+
+        phase2_elapsed = time.time() - phase2_start
+        print(f"    Done in {phase2_elapsed:.2f}s  ({len(dual_files)} predicted)")
+
+        # ---- Phase 3: Parallel GCG solving ----
+        print(f"  Phase 3: Running GCG ({num_cores} cores) ...")
+        phase3_start = time.time()
+
+        gcg_tasks = []
+        for lp_file, dec_file in chunk_pairs:
+            name = lp_file.stem
+            if name not in dual_files:
+                continue
+            log_file = log_dir / f"{name}_gcg.log"
+            gcg_tasks.append((
+                lp_file, dec_file, dual_files[name], args.gcg,
+                experiment_params, args.timeout, log_file, not args.no_logs
+            ))
+
+        with ProcessPoolExecutor(max_workers=num_cores) as pool:
+            future_to_name = {
+                pool.submit(_gcg_wrapper, task): task[0].stem
+                for task in gcg_tasks
+            }
+            done_count = 0
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                done_count += 1
+                try:
+                    status, exec_time, obj_val, mlp_iters = future.result()
+                    all_results.append({
+                        "instance": name, "status": status,
+                        "exec_time": exec_time, "obj_val": obj_val,
+                        "mlp_iters": mlp_iters,
+                    })
+                    print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  "
+                          f"status={status:10s}  time={exec_time:8.2f}s  obj={obj_val}")
+                except Exception as exc:
+                    all_results.append({
+                        "instance": name, "status": "CRASH",
+                        "exec_time": 0.0, "obj_val": float('inf'),
+                        "mlp_iters": 0,
+                    })
+                    print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  CRASHED: {exc}")
+
+        phase3_elapsed = time.time() - phase3_start
+        print(f"    Done in {phase3_elapsed:.2f}s")
+
+
+    pipeline_elapsed = time.time() - pipeline_start
+
+    # ---- Final Summary ----
+    all_results.sort(key=lambda r: r['instance'])
+
+    print(f"\n{'=' * 70}")
+    print("  Batch Pipeline Results")
+    print("=" * 70)
+    for r in all_results:
+        print(f"  {r['instance']:30s}  status={r['status']:10s}  "
+              f"time={r['exec_time']:8.2f}s  obj={r['obj_val']}")
+    print(f"\n  Total instances processed: {len(all_results)}")
+    print(f"  Total wall-clock time:         {pipeline_elapsed:8.2f}s")
     print("=" * 70)
 
 
 if __name__ == '__main__':
     main()
+

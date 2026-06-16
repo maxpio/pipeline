@@ -10,6 +10,8 @@ paths:
   results_path: "results.json"
   plot_path: "training_loss_plot1.png"
   gcg_executable: "/home/max/gcg/build/gcg-linux-release/bin/gcg"
+  log_dir: "logs"
+  duals_dir: "predicted_duals"
 
 # --- Model Architecture ---
 model_architecture:
@@ -64,6 +66,13 @@ scip_settings:
 # --- Pipeline Settings ---
 pipeline_settings:
   timeout: 3600
+  lp_dir: "/home/max/master_ths/data/GA/lpfiles/val"
+  dec_dir: "/home/max/master_ths/data/GA/decfiles"
+  instance_ratio: 0.1  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
+  required_instances: ["e10100-13.lp"]  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
+  random_seed: 42  # Seed for reproducible random sampling of instances
+  num_cores: 4  # CPU cores for parallel feature extraction and GCG solving
+  gpu_batch_size: 20  # Number of instances to predict duals for in one GPU batch
 
 # --- GCG Settings (Pricing Plugin) ---
 gcg_settings:
@@ -77,11 +86,11 @@ gcg_settings:
   perturbation_percent: 0.1
   add_round_0_columns: "False"
   bigm_value: 1000000.0
-  large_log: "True"
+  large_log: "False"
   use_smoothing: "True"
   smoothing_weight_start: 0.99
   smoothing_weight_factor: 0.4
   smoothing_weight_min: 0.01
   smoothing_improvement_threshold: 200.0
   disable_subprob_presolve_heur: "True"
-  masterpricer_stabilization: "True"
+  masterpricer_stabilization: "False"
