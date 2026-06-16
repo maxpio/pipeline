@@ -83,30 +83,48 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             print(f"\n--- SCIP OUTPUT END ({lp_file.name}) ---\n")
 
         # Parse SCIP's reported solving time, fallback to real execution time if it fails.
-        # We use findall and take the last match to avoid capturing intermediate subproblem times.
         matches = re.findall(r"Solving Time\s*\(sec\)\s*:\s*([\d\.]+)", full_output)
-        execution_time = float(matches[-1]) if matches else real_runtime
+        solving_time = float(matches[-1]) if matches else real_runtime
 
-        # Parse SCIP's Primal Bound (Objective Value)
-        pb_matches = re.findall(r"Primal Bound\s*:\s*([\+\-a-zA-Z0-9\.]+)", full_output)
-        objective_value = float('inf')
-        if pb_matches:
-            val_str = pb_matches[-1]
+        # 1. Dual Bound (final obj val)
+        db_matches = re.findall(r"Dual Bound\s*:\s*([\+\-a-zA-Z0-9\.]+)", full_output)
+        final_obj_val = float('inf')
+        if db_matches:
+            val_str = db_matches[-1]
             if val_str not in ('-', 'infinity'):
                 try:
-                    objective_value = float(val_str)
+                    final_obj_val = float(val_str)
                 except ValueError:
                     pass
 
-        # Parse MLP iterations
-        # This regex matches the line layout: "   time | node | left | SLP iter | MLP iter |"
-        mlp_matches = re.findall(r"^.*?(?:[\d\.]+[smh])\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|", full_output, re.MULTILINE)
-        mlp_iters = int(mlp_matches[-1]) if mlp_matches else 0
+        # 2. Columns needed for feasibility of RMP
+        pre_pricing_text = full_output.split("Starting reduced cost pricing...")[0] if "Starting reduced cost pricing..." in full_output else full_output
+        mvars_pattern = r"^[^\n]*?(?:[\d\.]+[smh])\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*[^\s]+\s*\|\s*[^\s]+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|"
+        mvars_matches = re.findall(mvars_pattern, pre_pricing_text, re.MULTILINE)
+        cols_needed = int(mvars_matches[-1]) if mvars_matches else 0
+
+        # 3. SLP iterations main loop
+        slp_pattern = r"^[^\n]*?(?:[\d\.]+[smh])\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|"
+        slp_matches = re.findall(slp_pattern, full_output, re.MULTILINE)
+        slp_iters_main = int(slp_matches[-1]) if slp_matches else 0
+
+        # 4. SLP iterations custom pricing
+        custom_slp_match = re.search(r"Total simplex iterations in custom pricing loop:\s*(\d+)", full_output)
+        slp_iters_custom = int(custom_slp_match.group(1)) if custom_slp_match else 0
 
         status = "SUCCESS" if process.returncode == 0 else "CRASH"
         if os.path.exists(batch_file_path):
             os.remove(batch_file_path)
-        return status, execution_time, objective_value, mlp_iters
+
+        metrics = {
+            "final_obj_val": final_obj_val,
+            "solving_time": solving_time,
+            "cols_needed_for_rmp_feasibility": cols_needed,
+            "slp_iterations_main_loop": slp_iters_main,
+            "slp_iterations_custom_pricing": slp_iters_custom
+        }
+
+        return status, metrics
 
     except Exception as e:
         print(f"Error executing SCIP process: {e}")

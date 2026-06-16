@@ -258,10 +258,10 @@ def run_gcg_with_duals(
     save_logs: bool = True,
     print_solver_output: bool = True,
     quiet: bool = False
-) -> tuple[str, float, float, int]:
+) -> tuple[str, dict]:
     """
     Constructs the GCG command string with the custom pricing plugin settings
-    and runs the solver.  Returns (status, exec_time, obj_val, mlp_iters).
+    and runs the solver.  Returns (status, metrics_dict).
     """
     if not quiet:
         print(f"[Step 3] Running GCG with predicted duals")
@@ -332,39 +332,38 @@ def resolve_instance_list(
     lp_dir: Path,
     instance_ratio: float,
     required_instances: list[str],
-    random_seed: int | None = None,
+    random_seed: int
 ) -> list[Path]:
     """
-    Collect the list of .lp files to run, based on:
-      1. All .lp files found in *lp_dir*.
-      2. A random sample of *instance_ratio* of those files.
-      3. Union with *required_instances* (filenames) which are always included.
+    Returns a sorted list of .lp file paths from `lp_dir`.
+    It guarantees all filenames in `required_instances` are included,
+    and then randomly samples the remaining files to meet `instance_ratio`.
     """
-    import random
-
     all_lp_files = sorted(lp_dir.glob("*.lp"))
     if not all_lp_files:
-        sys.exit(f"Error: No .lp files found in {lp_dir}")
+        return []
 
-    # --- required instances (always included) ---
-    required_set: set[str] = set(required_instances or [])
-    required_paths = [f for f in all_lp_files if f.name in required_set]
+    req_paths = []
+    for req in required_instances:
+        req_path = lp_dir / req
+        if req_path.exists():
+            req_paths.append(req_path)
+        else:
+            print(f"Warning: required instance '{req}' not found in {lp_dir}")
 
-    missing = required_set - {f.name for f in required_paths}
-    if missing:
-        print(f"  Warning: required instances not found in {lp_dir}: {missing}")
-
-    # --- random sample based on ratio ---
-    remaining = [f for f in all_lp_files if f.name not in required_set]
-    n_sample = max(0, int(len(remaining) * instance_ratio))
-
-    if random_seed is not None:
+    remaining_files = [f for f in all_lp_files if f not in req_paths]
+    
+    total_target_count = max(1, int(len(all_lp_files) * instance_ratio))
+    needed_count = max(0, total_target_count - len(req_paths))
+    
+    sampled_files = []
+    if needed_count > 0 and remaining_files:
+        import random
         random.seed(random_seed)
-    sampled = sorted(random.sample(remaining, n_sample)) if n_sample > 0 else []
+        sampled_files = random.sample(remaining_files, min(needed_count, len(remaining_files)))
 
-    # Union: required first, then sampled (sorted for reproducibility)
-    result = sorted(set(required_paths + sampled), key=lambda p: p.name)
-    return result
+    final_list = sorted(list(set(req_paths + sampled_files)))
+    return final_list
 
 
 def main():
@@ -455,14 +454,12 @@ def main():
     print("=" * 70)
 
     # Output dirs
-    duals_dir_cfg = config['paths'].get('duals_dir')
-    dual_dir = (Path(BASE_DIR) / duals_dir_cfg).resolve() if duals_dir_cfg else (args.output_dir or lp_dir)
-    dual_dir = Path(dual_dir).resolve()
+    duals_dir_cfg = config['pipeline_settings'].get('duals_dir')
+    dual_dir = Path(duals_dir_cfg).resolve() if duals_dir_cfg else (args.output_dir or lp_dir)
     dual_dir.mkdir(parents=True, exist_ok=True)
 
-    log_dir_cfg = config['paths'].get('log_dir')
-    log_dir = (Path(BASE_DIR) / log_dir_cfg).resolve() if log_dir_cfg else (args.output_dir or lp_dir)
-    log_dir = Path(log_dir).resolve()
+    log_dir_cfg = config['pipeline_settings'].get('log_dir')
+    log_dir = Path(log_dir_cfg).resolve() if log_dir_cfg else (args.output_dir or lp_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     experiment_params = config.get('gcg_settings', {})
@@ -489,7 +486,7 @@ def main():
             print(f"  Predicted duals saved to: {dual_file}")
 
         log_file = log_dir / f"{instance_name}_gcg.log"
-        status, exec_time, obj_val, mlp_iters = run_gcg_with_duals(
+        status, metrics = run_gcg_with_duals(
             lp_file=lp_file, dec_file=dec_file, dual_file=dual_file,
             gcg_executable=args.gcg, experiment_params=experiment_params,
             timeout=args.timeout, log_file=log_file,
@@ -503,190 +500,211 @@ def main():
         print("=" * 70)
         print(f"  Instance:        {instance_name}")
         print(f"  Status:          {status}")
-        print(f"  Execution Time:  {exec_time:.2f}s")
-        print(f"  Objective Value: {obj_val}")
-        print(f"  MLP Iterations:  {mlp_iters}")
+        print(f"  Execution Time:  {metrics['solving_time']:.2f}s")
+        print(f"  Objective Value: {metrics['final_obj_val']}")
         print(f"\n  Total wall-clock time: {pipeline_elapsed:.2f}s")
         print("=" * 70)
-        return
 
-    # ====================================================================
-    #  BATCH PATH  (parallel feature extraction, batched GPU, parallel GCG)
-    # ====================================================================
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-    import tempfile as _tempfile
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    # Load model once
-    model = LagrangianMultiplierModel(
-        feature_embedding_size=FEATURE_EMBEDDING_SIZE,
-        encoder_mlp_dims=ENCODER_MLP_DIMS,
-        gnn_mlp_dims=GNN_MLP_DIMS,
-        num_layers=NUM_LAYERS,
-        decoder_mlp_dims=DECODER_MLP_DIMS,
-        dropout=DROPOUT
-    ).to(device)
-    model.load_state_dict(torch.load(str(args.weights), map_location=device))
-    model.eval()
-
-    all_results = []
-    batch_size = args.gpu_batch_size
-
-    for batch_start in range(0, len(instance_pairs), batch_size):
-        batch_end = min(batch_start + batch_size, len(instance_pairs))
-        chunk_pairs = instance_pairs[batch_start:batch_end]
-        chunk_names = [lp.stem for lp, _ in chunk_pairs]
-        n_chunk = len(chunk_pairs)
-
-        print(f"\n{'=' * 50}")
-        print(f"  Processing Batch {(batch_start//batch_size) + 1} "
-              f"(Instances {batch_start+1}–{batch_end} / {len(instance_pairs)})")
-        print(f"{'=' * 50}")
-
-        # ---- Phase 1: Parallel feature extraction ----
-        print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
-        phase1_start = time.time()
-        feature_dicts: dict[str, dict] = {}
-        with ProcessPoolExecutor(max_workers=num_cores) as pool:
-            future_to_name = {
-                pool.submit(_extract_wrapper, pair): pair[0].stem
-                for pair in chunk_pairs
-            }
-            done_count = 0
-            for future in as_completed(future_to_name):
-                name = future_to_name[future]
-                done_count += 1
-                try:
-                    feature_dicts[name] = future.result()
-                    # print(f"    [{done_count}/{n_chunk}] extracted: {name}")
-                except Exception as exc:
-                    print(f"    [!] FAILED extraction: {name} — {exc}")
-
-        phase1_elapsed = time.time() - phase1_start
-        print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
-
-        # ---- Phase 2: Batched GPU prediction ----
-        print(f"  Phase 2: Predicting duals (GPU) ...")
-        phase2_start = time.time()
+        all_results = [{
+            "instance": instance_name,
+            "status": status,
+            **metrics
+        }]
         
-        ordered_names = [n for n in chunk_names if n in feature_dicts]
-        graphs = []
-        cons_names_per_instance = []
-        for name in ordered_names:
-            fd_dict = feature_dicts[name]
-            fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
-            try:
-                with os.fdopen(fd, 'w') as f:
-                    json.dump(fd_dict, f)
-                graph_data = create_bipartite_graph(tmp_json).to(device)
-            finally:
-                if os.path.exists(tmp_json):
-                    os.remove(tmp_json)
-            graphs.append(graph_data)
-            cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
+    else:
+        # ====================================================================
+        #  BATCH PATH  (parallel feature extraction, batched GPU, parallel GCG)
+        # ====================================================================
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        import tempfile as _tempfile
 
-        dual_files: dict[str, Path] = {}
-        if graphs:
-            with torch.no_grad():
-                batch_data = Batch.from_data_list(graphs).to(device)
-                lambda_raw, dualized_mask, eq_flags = model(batch_data)
-                actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-            # Un-batch predictions
-            actual_multipliers_cpu = actual_multipliers.cpu()
-            mask_cpu = dualized_mask.cpu()
+        # Load model once
+        model = LagrangianMultiplierModel(
+            feature_embedding_size=FEATURE_EMBEDDING_SIZE,
+            encoder_mlp_dims=ENCODER_MLP_DIMS,
+            gnn_mlp_dims=GNN_MLP_DIMS,
+            num_layers=NUM_LAYERS,
+            decoder_mlp_dims=DECODER_MLP_DIMS,
+            dropout=DROPOUT
+        ).to(device)
+        model.load_state_dict(torch.load(str(args.weights), map_location=device))
+        model.eval()
+
+        all_results = []
+        batch_size = args.gpu_batch_size
+
+        for batch_start in range(0, len(instance_pairs), batch_size):
+            batch_end = min(batch_start + batch_size, len(instance_pairs))
+            chunk_pairs = instance_pairs[batch_start:batch_end]
+            chunk_names = [lp.stem for lp, _ in chunk_pairs]
+            n_chunk = len(chunk_pairs)
+
+            print(f"\n{'=' * 50}")
+            print(f"  Processing Batch {(batch_start//batch_size) + 1} "
+                  f"(Instances {batch_start+1}–{batch_end} / {len(instance_pairs)})")
+            print(f"{'=' * 50}")
+
+            # ---- Phase 1: Parallel feature extraction ----
+            print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
+            phase1_start = time.time()
+            feature_dicts: dict[str, dict] = {}
+            with ProcessPoolExecutor(max_workers=num_cores) as pool:
+                future_to_name = {
+                    pool.submit(_extract_wrapper, pair): pair[0].stem
+                    for pair in chunk_pairs
+                }
+                done_count = 0
+                for future in as_completed(future_to_name):
+                    name = future_to_name[future]
+                    done_count += 1
+                    try:
+                        feature_dicts[name] = future.result()
+                        # print(f"    [{done_count}/{n_chunk}] extracted: {name}")
+                    except Exception as exc:
+                        print(f"    [!] FAILED extraction: {name} — {exc}")
+
+            phase1_elapsed = time.time() - phase1_start
+            print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
+
+            # ---- Phase 2: Batched GPU prediction ----
+            print(f"  Phase 2: Predicting duals (GPU) ...")
+            phase2_start = time.time()
             
-            if hasattr(batch_data['constraint'], 'batch') and batch_data['constraint'].batch is not None:
-                cons_batch_indices = batch_data['constraint'].batch.cpu()
-            else:
-                cons_batch_indices = torch.zeros(len(mask_cpu), dtype=torch.long)
-                
-            dualized_batch_indices = cons_batch_indices[mask_cpu]
-
-            for i, name in enumerate(ordered_names):
-                idx_mask = (cons_batch_indices == i)
-                idx_mask_dual = (dualized_batch_indices == i)
-                
-                inst_mults = actual_multipliers_cpu[idx_mask_dual].tolist()
-                inst_mask = mask_cpu[idx_mask].tolist()
-                all_cons = cons_names_per_instance[i]
-
-                dualized_names = [cname for j, cname in enumerate(all_cons) if inst_mask[j]]
-                mult_dict = dict(zip(dualized_names, inst_mults))
-
-                lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
-                dual_txt = "\n".join(lines) + "\n"
-
-                dual_file = dual_dir / f"{name}_predicted_duals.txt"
-                with open(dual_file, 'w') as f:
-                    f.write(dual_txt)
-                dual_files[name] = dual_file
-
-        phase2_elapsed = time.time() - phase2_start
-        print(f"    Done in {phase2_elapsed:.2f}s  ({len(dual_files)} predicted)")
-
-        # ---- Phase 3: Parallel GCG solving ----
-        print(f"  Phase 3: Running GCG ({num_cores} cores) ...")
-        phase3_start = time.time()
-
-        gcg_tasks = []
-        for lp_file, dec_file in chunk_pairs:
-            name = lp_file.stem
-            if name not in dual_files:
-                continue
-            log_file = log_dir / f"{name}_gcg.log"
-            gcg_tasks.append((
-                lp_file, dec_file, dual_files[name], args.gcg,
-                experiment_params, args.timeout, log_file, not args.no_logs
-            ))
-
-        with ProcessPoolExecutor(max_workers=num_cores) as pool:
-            future_to_name = {
-                pool.submit(_gcg_wrapper, task): task[0].stem
-                for task in gcg_tasks
-            }
-            done_count = 0
-            for future in as_completed(future_to_name):
-                name = future_to_name[future]
-                done_count += 1
+            ordered_names = [n for n in chunk_names if n in feature_dicts]
+            graphs = []
+            cons_names_per_instance = []
+            for name in ordered_names:
+                fd_dict = feature_dicts[name]
+                fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
                 try:
-                    status, exec_time, obj_val, mlp_iters = future.result()
-                    all_results.append({
-                        "instance": name, "status": status,
-                        "exec_time": exec_time, "obj_val": obj_val,
-                        "mlp_iters": mlp_iters,
-                    })
-                    print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  "
-                          f"status={status:10s}  time={exec_time:8.2f}s  obj={obj_val}")
-                except Exception as exc:
-                    all_results.append({
-                        "instance": name, "status": "CRASH",
-                        "exec_time": 0.0, "obj_val": float('inf'),
-                        "mlp_iters": 0,
-                    })
-                    print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  CRASHED: {exc}")
+                    with os.fdopen(fd, 'w') as f:
+                        json.dump(fd_dict, f)
+                    graph_data = create_bipartite_graph(tmp_json).to(device)
+                finally:
+                    if os.path.exists(tmp_json):
+                        os.remove(tmp_json)
+                graphs.append(graph_data)
+                cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
 
-        phase3_elapsed = time.time() - phase3_start
-        print(f"    Done in {phase3_elapsed:.2f}s")
+            dual_files: dict[str, Path] = {}
+            if graphs:
+                with torch.no_grad():
+                    batch_data = Batch.from_data_list(graphs).to(device)
+                    lambda_raw, dualized_mask, eq_flags = model(batch_data)
+                    actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+
+                # Un-batch predictions
+                actual_multipliers_cpu = actual_multipliers.cpu()
+                mask_cpu = dualized_mask.cpu()
+                
+                if hasattr(batch_data['constraint'], 'batch') and batch_data['constraint'].batch is not None:
+                    cons_batch_indices = batch_data['constraint'].batch.cpu()
+                else:
+                    cons_batch_indices = torch.zeros(len(mask_cpu), dtype=torch.long)
+                    
+                dualized_batch_indices = cons_batch_indices[mask_cpu]
+
+                for i, name in enumerate(ordered_names):
+                    idx_mask = (cons_batch_indices == i)
+                    idx_mask_dual = (dualized_batch_indices == i)
+                    
+                    inst_mults = actual_multipliers_cpu[idx_mask_dual].tolist()
+                    inst_mask = mask_cpu[idx_mask].tolist()
+                    all_cons = cons_names_per_instance[i]
+
+                    dualized_names = [cname for j, cname in enumerate(all_cons) if inst_mask[j]]
+                    mult_dict = dict(zip(dualized_names, inst_mults))
+
+                    lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
+                    dual_txt = "\n".join(lines) + "\n"
+
+                    dual_file = dual_dir / f"{name}_predicted_duals.txt"
+                    with open(dual_file, 'w') as f:
+                        f.write(dual_txt)
+                    dual_files[name] = dual_file
+
+            phase2_elapsed = time.time() - phase2_start
+            print(f"    Done in {phase2_elapsed:.2f}s  ({len(dual_files)} predicted)")
+
+            # ---- Phase 3: Parallel GCG solving ----
+            print(f"  Phase 3: Running GCG ({num_cores} cores) ...")
+            phase3_start = time.time()
+
+            gcg_tasks = []
+            for lp_file, dec_file in chunk_pairs:
+                name = lp_file.stem
+                if name not in dual_files:
+                    continue
+                log_file = log_dir / f"{name}_gcg.log"
+                gcg_tasks.append((
+                    lp_file, dec_file, dual_files[name], args.gcg,
+                    experiment_params, args.timeout, log_file, not args.no_logs
+                ))
+
+            with ProcessPoolExecutor(max_workers=num_cores) as pool:
+                future_to_name = {
+                    pool.submit(_gcg_wrapper, task): task[0].stem
+                    for task in gcg_tasks
+                }
+                done_count = 0
+                for future in as_completed(future_to_name):
+                    name = future_to_name[future]
+                    done_count += 1
+                    try:
+                        status, metrics = future.result()
+                        all_results.append({
+                            "instance": name, "status": status,
+                            **metrics
+                        })
+                        print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  "
+                              f"status={status:10s}  time={metrics['solving_time']:8.2f}s  obj={metrics['final_obj_val']}")
+                    except Exception as exc:
+                        all_results.append({
+                            "instance": name, "status": "CRASH",
+                            "solving_time": 0.0, "final_obj_val": float('inf'),
+                            "cols_needed_for_rmp_feasibility": 0,
+                            "slp_iterations_main_loop": 0,
+                            "slp_iterations_custom_pricing": 0,
+                        })
+                        print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  CRASHED: {exc}")
+
+            phase3_elapsed = time.time() - phase3_start
+            print(f"    Done in {phase3_elapsed:.2f}s")
 
 
-    pipeline_elapsed = time.time() - pipeline_start
+        pipeline_elapsed = time.time() - pipeline_start
 
-    # ---- Final Summary ----
-    all_results.sort(key=lambda r: r['instance'])
+        # ---- Final Summary ----
+        all_results.sort(key=lambda r: r['instance'])
 
-    print(f"\n{'=' * 70}")
-    print("  Batch Pipeline Results")
-    print("=" * 70)
-    for r in all_results:
-        print(f"  {r['instance']:30s}  status={r['status']:10s}  "
-              f"time={r['exec_time']:8.2f}s  obj={r['obj_val']}")
-    print(f"\n  Total instances processed: {len(all_results)}")
-    print(f"  Total wall-clock time:         {pipeline_elapsed:8.2f}s")
-    print("=" * 70)
+        print(f"\n{'=' * 70}")
+        print("  Batch Pipeline Results")
+        print("=" * 70)
+        for r in all_results:
+            print(f"  {r['instance']:30s}  status={r['status']:10s}  "
+                  f"time={r.get('solving_time', 0.0):8.2f}s  obj={r.get('final_obj_val', 'inf')}")
+        print(f"\n  Total instances processed: {len(all_results)}")
+        print(f"  Total wall-clock time:         {pipeline_elapsed:8.2f}s")
+        print("=" * 70)
+
+    # Save to JSON
+    exp_dir_cfg = config['pipeline_settings'].get('experiments_dir')
+    if exp_dir_cfg:
+        exp_dir = Path(exp_dir_cfg).resolve()
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        exp_json_name = config['pipeline_settings'].get('experiment_json_name', 'run_results.json')
+        exp_json_path = exp_dir / exp_json_name
+        
+        output_data = {
+            "total_wall_clock_time": pipeline_elapsed,
+            "instances": all_results
+        }
+        with open(exp_json_path, 'w') as f:
+            json.dump(output_data, f, indent=4)
+        print(f"\nSaved experiment results to {exp_json_path}")
 
 
 if __name__ == '__main__':
     main()
-
