@@ -476,14 +476,20 @@ def main():
         print(f"  Instance: {instance_name}")
         print("=" * 70)
 
-        feature_dict = extract_features_single(str(lp_file), str(dec_file), quiet=args.quiet)
-        mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
-
+        use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
         dual_file = dual_dir / f"{instance_name}_predicted_duals.txt"
-        with open(dual_file, 'w') as f:
-            f.write(dual_txt)
-        if not args.quiet:
-            print(f"  Predicted duals saved to: {dual_file}")
+
+        if use_custom_duals:
+            feature_dict = extract_features_single(str(lp_file), str(dec_file), quiet=args.quiet)
+            mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
+            with open(dual_file, 'w') as f:
+                f.write(dual_txt)
+            if not args.quiet:
+                print(f"  Predicted duals saved to: {dual_file}")
+        else:
+            dual_file.touch()
+            if not args.quiet:
+                print("  Skipped feature extraction and prediction (use_custom_duals is False)")
 
         log_file = log_dir / f"{instance_name}_gcg.log"
         status, metrics = run_gcg_with_duals(
@@ -518,19 +524,22 @@ def main():
         from concurrent.futures import ProcessPoolExecutor, as_completed
         import tempfile as _tempfile
 
+        use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
+
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Load model once
-        model = LagrangianMultiplierModel(
-            feature_embedding_size=FEATURE_EMBEDDING_SIZE,
-            encoder_mlp_dims=ENCODER_MLP_DIMS,
-            gnn_mlp_dims=GNN_MLP_DIMS,
-            num_layers=NUM_LAYERS,
-            decoder_mlp_dims=DECODER_MLP_DIMS,
-            dropout=DROPOUT
-        ).to(device)
-        model.load_state_dict(torch.load(str(args.weights), map_location=device))
-        model.eval()
+        if use_custom_duals:
+            model = LagrangianMultiplierModel(
+                feature_embedding_size=FEATURE_EMBEDDING_SIZE,
+                encoder_mlp_dims=ENCODER_MLP_DIMS,
+                gnn_mlp_dims=GNN_MLP_DIMS,
+                num_layers=NUM_LAYERS,
+                decoder_mlp_dims=DECODER_MLP_DIMS,
+                dropout=DROPOUT
+            ).to(device)
+            model.load_state_dict(torch.load(str(args.weights), map_location=device))
+            model.eval()
 
         all_results = []
         batch_size = args.gpu_batch_size
@@ -546,87 +555,96 @@ def main():
                   f"(Instances {batch_start+1}–{batch_end} / {len(instance_pairs)})")
             print(f"{'=' * 50}")
 
-            # ---- Phase 1: Parallel feature extraction ----
-            print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
-            phase1_start = time.time()
-            feature_dicts: dict[str, dict] = {}
-            with ProcessPoolExecutor(max_workers=num_cores) as pool:
-                future_to_name = {
-                    pool.submit(_extract_wrapper, pair): pair[0].stem
-                    for pair in chunk_pairs
-                }
-                done_count = 0
-                for future in as_completed(future_to_name):
-                    name = future_to_name[future]
-                    done_count += 1
-                    try:
-                        feature_dicts[name] = future.result()
-                        # print(f"    [{done_count}/{n_chunk}] extracted: {name}")
-                    except Exception as exc:
-                        print(f"    [!] FAILED extraction: {name} — {exc}")
-
-            phase1_elapsed = time.time() - phase1_start
-            print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
-
-            # ---- Phase 2: Batched GPU prediction ----
-            print(f"  Phase 2: Predicting duals (GPU) ...")
-            phase2_start = time.time()
-            
-            ordered_names = [n for n in chunk_names if n in feature_dicts]
-            graphs = []
-            cons_names_per_instance = []
-            for name in ordered_names:
-                fd_dict = feature_dicts[name]
-                fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
-                try:
-                    with os.fdopen(fd, 'w') as f:
-                        json.dump(fd_dict, f)
-                    graph_data = create_bipartite_graph(tmp_json).to(device)
-                finally:
-                    if os.path.exists(tmp_json):
-                        os.remove(tmp_json)
-                graphs.append(graph_data)
-                cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
-
             dual_files: dict[str, Path] = {}
-            if graphs:
-                with torch.no_grad():
-                    batch_data = Batch.from_data_list(graphs).to(device)
-                    lambda_raw, dualized_mask, eq_flags = model(batch_data)
-                    actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
 
-                # Un-batch predictions
-                actual_multipliers_cpu = actual_multipliers.cpu()
-                mask_cpu = dualized_mask.cpu()
+            if use_custom_duals:
+                # ---- Phase 1: Parallel feature extraction ----
+                print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
+                phase1_start = time.time()
+                feature_dicts: dict[str, dict] = {}
+                with ProcessPoolExecutor(max_workers=num_cores) as pool:
+                    future_to_name = {
+                        pool.submit(_extract_wrapper, pair): pair[0].stem
+                        for pair in chunk_pairs
+                    }
+                    done_count = 0
+                    for future in as_completed(future_to_name):
+                        name = future_to_name[future]
+                        done_count += 1
+                        try:
+                            feature_dicts[name] = future.result()
+                            # print(f"    [{done_count}/{n_chunk}] extracted: {name}")
+                        except Exception as exc:
+                            print(f"    [!] FAILED extraction: {name} — {exc}")
+
+                phase1_elapsed = time.time() - phase1_start
+                print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
+
+                # ---- Phase 2: Batched GPU prediction ----
+                print(f"  Phase 2: Predicting duals (GPU) ...")
+                phase2_start = time.time()
                 
-                if hasattr(batch_data['constraint'], 'batch') and batch_data['constraint'].batch is not None:
-                    cons_batch_indices = batch_data['constraint'].batch.cpu()
-                else:
-                    cons_batch_indices = torch.zeros(len(mask_cpu), dtype=torch.long)
+                ordered_names = [n for n in chunk_names if n in feature_dicts]
+                graphs = []
+                cons_names_per_instance = []
+                for name in ordered_names:
+                    fd_dict = feature_dicts[name]
+                    fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
+                    try:
+                        with os.fdopen(fd, 'w') as f:
+                            json.dump(fd_dict, f)
+                        graph_data = create_bipartite_graph(tmp_json).to(device)
+                    finally:
+                        if os.path.exists(tmp_json):
+                            os.remove(tmp_json)
+                    graphs.append(graph_data)
+                    cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
+
+                if graphs:
+                    with torch.no_grad():
+                        batch_data = Batch.from_data_list(graphs).to(device)
+                        lambda_raw, dualized_mask, eq_flags = model(batch_data)
+                        actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+
+                    # Un-batch predictions
+                    actual_multipliers_cpu = actual_multipliers.cpu()
+                    mask_cpu = dualized_mask.cpu()
                     
-                dualized_batch_indices = cons_batch_indices[mask_cpu]
+                    if hasattr(batch_data['constraint'], 'batch') and batch_data['constraint'].batch is not None:
+                        cons_batch_indices = batch_data['constraint'].batch.cpu()
+                    else:
+                        cons_batch_indices = torch.zeros(len(mask_cpu), dtype=torch.long)
+                        
+                    dualized_batch_indices = cons_batch_indices[mask_cpu]
 
-                for i, name in enumerate(ordered_names):
-                    idx_mask = (cons_batch_indices == i)
-                    idx_mask_dual = (dualized_batch_indices == i)
-                    
-                    inst_mults = actual_multipliers_cpu[idx_mask_dual].tolist()
-                    inst_mask = mask_cpu[idx_mask].tolist()
-                    all_cons = cons_names_per_instance[i]
+                    for i, name in enumerate(ordered_names):
+                        idx_mask = (cons_batch_indices == i)
+                        idx_mask_dual = (dualized_batch_indices == i)
+                        
+                        inst_mults = actual_multipliers_cpu[idx_mask_dual].tolist()
+                        inst_mask = mask_cpu[idx_mask].tolist()
+                        all_cons = cons_names_per_instance[i]
 
-                    dualized_names = [cname for j, cname in enumerate(all_cons) if inst_mask[j]]
-                    mult_dict = dict(zip(dualized_names, inst_mults))
+                        dualized_names = [cname for j, cname in enumerate(all_cons) if inst_mask[j]]
+                        mult_dict = dict(zip(dualized_names, inst_mults))
 
-                    lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
-                    dual_txt = "\n".join(lines) + "\n"
+                        lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
+                        dual_txt = "\n".join(lines) + "\n"
 
-                    dual_file = dual_dir / f"{name}_predicted_duals.txt"
-                    with open(dual_file, 'w') as f:
-                        f.write(dual_txt)
-                    dual_files[name] = dual_file
+                        dual_file = dual_dir / f"{name}_predicted_duals.txt"
+                        with open(dual_file, 'w') as f:
+                            f.write(dual_txt)
+                        dual_files[name] = dual_file
 
-            phase2_elapsed = time.time() - phase2_start
-            print(f"    Done in {phase2_elapsed:.2f}s  ({len(dual_files)} predicted)")
+                phase2_elapsed = time.time() - phase2_start
+                print(f"    Done in {phase2_elapsed:.2f}s  ({len(dual_files)} predicted)")
+            else:
+                print("  Phase 1 & 2: Skipped (use_custom_duals is False)")
+                for lp_file, _ in chunk_pairs:
+                    name = lp_file.stem
+                    empty_dual = dual_dir / f"{name}_predicted_duals.txt"
+                    empty_dual.touch()
+                    dual_files[name] = empty_dual
 
             # ---- Phase 3: Parallel GCG solving ----
             print(f"  Phase 3: Running GCG ({num_cores} cores) ...")

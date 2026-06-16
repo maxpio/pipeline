@@ -71,19 +71,19 @@ pipeline_settings:
   duals_dir: "/home/max/master_ths/data/GA/predicted_duals"
   log_dir: "/home/max/master_ths/data/GA/logs"
   experiments_dir: "/home/max/master_ths/data/GA/experiments"
-  experiment_json_name: "run_results.json"
-  instance_ratio: 0.1  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
+  experiment_json_name: "stabilized.json"
+  instance_ratio: 1.0  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
   required_instances: ["e10100-13.lp"]  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
   random_seed: 42  # Seed for reproducible random sampling of instances
   num_cores: 4  # CPU cores for parallel feature extraction and GCG solving
-  gpu_batch_size: 20  # Number of instances to predict duals for in one GPU batch
+  gpu_batch_size: 40  # Number of instances to predict duals for in one GPU batch
 
 # --- GCG Settings (Pricing Plugin) ---
 gcg_settings:
   disable_heuristics: True
   disable_presolving: True
   disable_separating_cliques: True
-  solve_root_only: True
+  solve_root_only: False
   use_custom_duals: "True"
   use_bigm_artificials: "False"
   n_perturbation_rounds: 0
@@ -96,5 +96,13 @@ gcg_settings:
   smoothing_weight_factor: 0.4
   smoothing_weight_min: 0.01
   smoothing_improvement_threshold: 200.0
-  disable_subprob_presolve_heur: "True"
+  disable_subprob_presolve_heur: "False"
   masterpricer_stabilization: "False"
+
+# --- Visualization Settings ---
+visualization_settings:
+  experiment_files:
+    - "default.json"
+    - "raw.json"
+    - "stabilized.json"
+    # add other .json filenames here to compare them
