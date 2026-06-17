@@ -382,6 +382,12 @@ def main():
     parser.add_argument("--required-instances", nargs='*',
                         default=config['pipeline_settings'].get('required_instances', []),
                         help="Filenames that must always be included (e.g. e10100-1.lp)")
+    parser.add_argument("--skip-prediction", action="store_true",
+                        default=config['pipeline_settings'].get('skip_prediction', False),
+                        help="Skip prediction step and use saved duals")
+    parser.add_argument("--duals-dir-read", type=Path,
+                        default=config['pipeline_settings'].get('duals_dir_read'),
+                        help="Directory to read saved duals from if skip-prediction is enabled")
     parser.add_argument("--weights", type=Path, default=Path(DEFAULT_WEIGHTS_PATH),
                         help="Path to trained model weights (.pth)")
     parser.add_argument("--gcg", type=Path, default=Path(DEFAULT_GCG_EXECUTABLE),
@@ -479,7 +485,21 @@ def main():
         use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
         dual_file = dual_dir / f"{instance_name}_predicted_duals.txt"
 
-        if use_custom_duals:
+        if use_custom_duals and args.skip_prediction:
+            if args.duals_dir_read:
+                read_dir = Path(args.duals_dir_read).resolve()
+                d_file = read_dir / f"{instance_name}_predicted_duals.txt"
+                if d_file.exists():
+                    dual_file = d_file
+                    if not args.quiet:
+                        print(f"  Skipped prediction, using saved duals from: {dual_file}")
+                else:
+                    print(f"  [!] Saved duals not found at {d_file}. Creating empty file.")
+                    dual_file.touch()
+            else:
+                print("  [!] skip_prediction is true but duals_dir_read is not set. Creating empty file.")
+                dual_file.touch()
+        elif use_custom_duals:
             feature_dict = extract_features_single(str(lp_file), str(dec_file), quiet=args.quiet)
             mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
             with open(dual_file, 'w') as f:
@@ -529,7 +549,7 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Load model once
-        if use_custom_duals:
+        if use_custom_duals and not args.skip_prediction:
             model = LagrangianMultiplierModel(
                 feature_embedding_size=FEATURE_EMBEDDING_SIZE,
                 encoder_mlp_dims=ENCODER_MLP_DIMS,
@@ -557,7 +577,21 @@ def main():
 
             dual_files: dict[str, Path] = {}
 
-            if use_custom_duals:
+            if use_custom_duals and args.skip_prediction:
+                print(f"  Phase 1 & 2: Skipped (skip_prediction is True), using saved duals ...")
+                read_dir = Path(args.duals_dir_read).resolve() if args.duals_dir_read else None
+                for lp_file, _ in chunk_pairs:
+                    name = lp_file.stem
+                    if read_dir:
+                        d_file = read_dir / f"{name}_predicted_duals.txt"
+                        if not d_file.exists():
+                            print(f"    [!] Saved duals not found at {d_file}")
+                        dual_files[name] = d_file
+                    else:
+                        d_file = dual_dir / f"{name}_predicted_duals.txt"
+                        d_file.touch()
+                        dual_files[name] = d_file
+            elif use_custom_duals:
                 # ---- Phase 1: Parallel feature extraction ----
                 print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
                 phase1_start = time.time()
