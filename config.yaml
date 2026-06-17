@@ -69,10 +69,10 @@ pipeline_settings:
   lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
   dec_dir: "/home/max/master_ths/data/GAPD/decfiles"
   duals_dir: "/home/max/master_ths/data/GA/predicted_duals"
-  duals_dir_read: "/home/max/master_ths/data/GAPD/dualvalues"
+  duals_dir_read: "/home/max/master_ths/data/GAPD/optdualvalues"
   log_dir: "/home/max/master_ths/data/GAPD/logs"
   experiments_dir: "/home/max/master_ths/data/GAPD/experiments"
-  experiment_json_name: "default.json"
+  experiment_json_name: "optD.json"
   skip_prediction: True
   instance_ratio: 1.0  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
@@ -83,15 +83,15 @@ pipeline_settings:
 
 # --- GCG Settings (Pricing Plugin) ---
 gcg_settings:
-  disable_heuristics: False
-  disable_presolving: False
-  disable_separating_cliques: False
+  disable_heuristics: True
+  disable_presolving: True
+  disable_separating_cliques: True
   solve_root_only: True
-  use_custom_duals: "False"
+  use_custom_duals: "True"
   use_bigm_artificials: "False"
   n_perturbation_rounds: 0
-  perturbation_percent: 0.1
-  add_round_0_columns: "True"
+  perturbation_percent: 0.007
+  add_round_0_columns: "False"
   bigm_value: 1000000.0
   large_log: "True"
   use_smoothing: "True"
@@ -100,7 +100,7 @@ gcg_settings:
   smoothing_weight_min: 0.01
   smoothing_improvement_threshold: 200.0
   disable_subprob_presolve_heur: "False"
-  masterpricer_stabilization: "True"
+  masterpricer_stabilization: "False"
 
 # --- Visualization Settings ---
 visualization_settings:
@@ -108,10 +108,7 @@ visualization_settings:
     - "default.json"
     - "raw.json"
     - "optD.json"
-    - "optDInitCol.json"
-    - "predict.json"
-    - "usePredicted.json"
-    - "subopt99.json"
+    - "suboptD.json"
     - "randD.json"
 
     # add other .json filenames here to compare them
@@ -120,16 +117,16 @@ visualization_settings:
 duals_generation_settings:
   lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
   results_file: "/home/max/master_ths/data/GAPD/results.json"
-  prefix_filter: "e10100"
+  prefix_filter: ""
   generate_subopt: True
-  subopt_percent: 0.99
+  subopt_percent: 0.995
   generate_random: True
   random_gauss_mu: 0.0
   random_gauss_sigma: 5.0
   multicore_solving: True
   max_workers: 4
   short_log_output: True
-  max_iters: 500
+  max_iters: 400
   initial_step_size: 4.0
   no_improve_limit: 4
   step_size_shrink: 0.5
