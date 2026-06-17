@@ -332,11 +332,12 @@ def resolve_instance_list(
     lp_dir: Path,
     instance_ratio: float,
     required_instances: list[str],
-    random_seed: int
+    random_seed: int,
+    required_prefix: str = None
 ) -> list[Path]:
     """
     Returns a sorted list of .lp file paths from `lp_dir`.
-    It guarantees all filenames in `required_instances` are included,
+    It guarantees all filenames in `required_instances` and those starting with `required_prefix` are included,
     and then randomly samples the remaining files to meet `instance_ratio`.
     """
     all_lp_files = sorted(lp_dir.glob("*.lp"))
@@ -350,6 +351,11 @@ def resolve_instance_list(
             req_paths.append(req_path)
         else:
             print(f"Warning: required instance '{req}' not found in {lp_dir}")
+            
+    if required_prefix:
+        for f in all_lp_files:
+            if f.name.startswith(required_prefix) and f not in req_paths:
+                req_paths.append(f)
 
     remaining_files = [f for f in all_lp_files if f not in req_paths]
     
@@ -382,6 +388,9 @@ def main():
     parser.add_argument("--required-instances", nargs='*',
                         default=config['pipeline_settings'].get('required_instances', []),
                         help="Filenames that must always be included (e.g. e10100-1.lp)")
+    parser.add_argument("--required-prefix", type=str,
+                        default=config['pipeline_settings'].get('required_prefix', None),
+                        help="Prefix for filenames that must always be included")
     parser.add_argument("--skip-prediction", action="store_true",
                         default=config['pipeline_settings'].get('skip_prediction', False),
                         help="Skip prediction step and use saved duals")
@@ -434,6 +443,7 @@ def main():
         instance_ratio=args.instance_ratio,
         required_instances=args.required_instances,
         random_seed=args.seed,
+        required_prefix=args.required_prefix
     )
 
     # Build (lp_file, dec_file) pairs, filtering out missing .dec files
@@ -483,12 +493,12 @@ def main():
         print("=" * 70)
 
         use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
-        dual_file = dual_dir / f"{instance_name}_predicted_duals.txt"
+        dual_file = dual_dir / f"{instance_name}.txt"
 
         if use_custom_duals and args.skip_prediction:
             if args.duals_dir_read:
                 read_dir = Path(args.duals_dir_read).resolve()
-                d_file = read_dir / f"{instance_name}_predicted_duals.txt"
+                d_file = read_dir / f"{instance_name}.txt"
                 if d_file.exists():
                     dual_file = d_file
                     if not args.quiet:
@@ -564,6 +574,9 @@ def main():
         all_results = []
         batch_size = args.gpu_batch_size
 
+        if device.type == 'cpu' or args.skip_prediction or not use_custom_duals:
+            batch_size = len(instance_pairs)
+
         for batch_start in range(0, len(instance_pairs), batch_size):
             batch_end = min(batch_start + batch_size, len(instance_pairs))
             chunk_pairs = instance_pairs[batch_start:batch_end]
@@ -583,12 +596,12 @@ def main():
                 for lp_file, _ in chunk_pairs:
                     name = lp_file.stem
                     if read_dir:
-                        d_file = read_dir / f"{name}_predicted_duals.txt"
+                        d_file = read_dir / f"{name}.txt"
                         if not d_file.exists():
                             print(f"    [!] Saved duals not found at {d_file}")
                         dual_files[name] = d_file
                     else:
-                        d_file = dual_dir / f"{name}_predicted_duals.txt"
+                        d_file = dual_dir / f"{name}.txt"
                         d_file.touch()
                         dual_files[name] = d_file
             elif use_custom_duals:
@@ -665,7 +678,7 @@ def main():
                         lines = [f'"{k}": {v},' for k, v in mult_dict.items()]
                         dual_txt = "\n".join(lines) + "\n"
 
-                        dual_file = dual_dir / f"{name}_predicted_duals.txt"
+                        dual_file = dual_dir / f"{name}.txt"
                         with open(dual_file, 'w') as f:
                             f.write(dual_txt)
                         dual_files[name] = dual_file
@@ -676,7 +689,7 @@ def main():
                 print("  Phase 1 & 2: Skipped (use_custom_duals is False)")
                 for lp_file, _ in chunk_pairs:
                     name = lp_file.stem
-                    empty_dual = dual_dir / f"{name}_predicted_duals.txt"
+                    empty_dual = dual_dir / f"{name}.txt"
                     empty_dual.touch()
                     dual_files[name] = empty_dual
 

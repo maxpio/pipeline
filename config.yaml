@@ -66,31 +66,32 @@ scip_settings:
 # --- Pipeline Settings ---
 pipeline_settings:
   timeout: 3600
-  lp_dir: "/home/max/master_ths/data/GA/lpfiles/val"
-  dec_dir: "/home/max/master_ths/data/GA/decfiles"
+  lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
+  dec_dir: "/home/max/master_ths/data/GAPD/decfiles"
   duals_dir: "/home/max/master_ths/data/GA/predicted_duals"
-  duals_dir_read: "/home/max/master_ths/data/GA/predicted_duals"
-  log_dir: "/home/max/master_ths/data/GA/logs"
-  experiments_dir: "/home/max/master_ths/data/GA/experiments"
-  experiment_json_name: "stabilized.json"
+  duals_dir_read: "/home/max/master_ths/data/GAPD/dualvalues"
+  log_dir: "/home/max/master_ths/data/GAPD/logs"
+  experiments_dir: "/home/max/master_ths/data/GAPD/experiments"
+  experiment_json_name: "default.json"
   skip_prediction: True
-  instance_ratio: 0.1  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
-  required_instances: ["e10100-13.lp"]  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
+  instance_ratio: 1.0  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
+  required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
+  required_prefix: ""  # Instances with this prefix are always included
   random_seed: 42  # Seed for reproducible random sampling of instances
   num_cores: 4  # CPU cores for parallel feature extraction and GCG solving
-  gpu_batch_size: 40  # Number of instances to predict duals for in one GPU batch
+  gpu_batch_size: 50  # Number of instances to predict duals for in one GPU batch
 
 # --- GCG Settings (Pricing Plugin) ---
 gcg_settings:
-  disable_heuristics: True
-  disable_presolving: True
-  disable_separating_cliques: True
-  solve_root_only: False
-  use_custom_duals: "True"
+  disable_heuristics: False
+  disable_presolving: False
+  disable_separating_cliques: False
+  solve_root_only: True
+  use_custom_duals: "False"
   use_bigm_artificials: "False"
   n_perturbation_rounds: 0
   perturbation_percent: 0.1
-  add_round_0_columns: "False"
+  add_round_0_columns: "True"
   bigm_value: 1000000.0
   large_log: "True"
   use_smoothing: "True"
@@ -99,13 +100,37 @@ gcg_settings:
   smoothing_weight_min: 0.01
   smoothing_improvement_threshold: 200.0
   disable_subprob_presolve_heur: "False"
-  masterpricer_stabilization: "False"
+  masterpricer_stabilization: "True"
 
 # --- Visualization Settings ---
 visualization_settings:
   experiment_files:
     - "default.json"
     - "raw.json"
-    - "stabilized.json"
-    - "test.json"
+    - "optD.json"
+    - "optDInitCol.json"
+    - "predict.json"
+    - "usePredicted.json"
+    - "subopt99.json"
+    - "randD.json"
+
     # add other .json filenames here to compare them
+
+# --- Duals Generation Settings ---
+duals_generation_settings:
+  lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
+  results_file: "/home/max/master_ths/data/GAPD/results.json"
+  prefix_filter: "e10100"
+  generate_subopt: True
+  subopt_percent: 0.99
+  generate_random: True
+  random_gauss_mu: 0.0
+  random_gauss_sigma: 5.0
+  multicore_solving: True
+  max_workers: 4
+  short_log_output: True
+  max_iters: 500
+  initial_step_size: 4.0
+  no_improve_limit: 4
+  step_size_shrink: 0.5
+  tolerance: 1.0e-6
