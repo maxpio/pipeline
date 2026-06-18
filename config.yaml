@@ -7,9 +7,9 @@ paths:
   lp_dir: "data/GAC/lpfiles"
   labels_path: "data/GAC/lagrangian_bounds.json"
   lp_bounds_path: "data/GAC/lp_bounds.json"
-  weights_path: "/home/max/master_ths/data/GAC/weights/gaptest1.pth"
+  weights_path: "/home/max/master_ths/data/GAC/gaptest.pth"
   results_path: "/home/max/master_ths/data/GAC/results.json"
-  plot_path: "/home/max/master_ths/data/GAC/training_loss_plot1.png"
+  plot_path: "/home/max/master_ths/data/GAC/training_loss_plot.png"
   gcg_executable: "/home/max/gcg/build/gcg-linux-release/bin/gcg"
   log_dir: "logs"
   duals_dir: "predicted_duals"
@@ -23,9 +23,10 @@ training_paths:
   feature_dir: "/home/max/master_ths/data/GAC/featureinf"
   labels_path: "/home/max/master_ths/data/GAC/lagrangian_bounds.json"
   lp_bounds_path: "/home/max/master_ths/data/GAC/lp_bounds.json"
-  weights_path: "/home/max/master_ths/data/GAC/weights/gaptest1.pth"
+  weights_path: "/home/max/master_ths/data/GAC/gaptest.pth"
   results_path: "/home/max/master_ths/data/GAC/results.json"
   plot_path: "/home/max/master_ths/data/GAC/training_loss_plot.png"
+  boxplot_path: "/home/max/master_ths/data/GAC/best_model_boxplots.png"
 
 # --- Model Architecture ---
 model_architecture:
@@ -79,12 +80,13 @@ scip_settings:
 pipeline_settings:
   timeout: 3600
   lp_dir: "/home/max/master_ths/data/GAC/lpfiles"
+  eval_set: "test"
   dec_dir: "/home/max/master_ths/data/GAC/decfiles"
   duals_dir: "/home/max/master_ths/data/GAC/predicted_duals"
   duals_dir_read: "/home/max/master_ths/data/GAC/predicted_duals"
   log_dir: "/home/max/master_ths/data/GAC/logs"
   experiments_dir: "/home/max/master_ths/data/GAC/experiments"
-  experiment_json_name: "test.json"
+  experiment_json_name: "testraw.json"
   skip_prediction: False
   instance_ratio: 0.1  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
@@ -98,12 +100,12 @@ gcg_settings:
   disable_heuristics: True
   disable_presolving: True
   disable_separating_cliques: True
-  solve_root_only: True
-  use_custom_duals: "True"
+  solve_root_only: False
+  use_custom_duals: "False"
   use_bigm_artificials: "False"
   n_perturbation_rounds: 0
   perturbation_percent: 0.007
-  add_round_0_columns: "False"
+  add_round_0_columns: "True"
   bigm_value: 1000000.0
   large_log: "True"
   use_smoothing: "True"
@@ -117,11 +119,8 @@ gcg_settings:
 # --- Visualization Settings ---
 visualization_settings:
   experiment_files:
-    - "default.json"
-    - "raw.json"
-    - "optD.json"
-    - "suboptD.json"
-    - "randD.json"
+    - "testraw.json"
+    - "testpred.json"
 
     # add other .json filenames here to compare them
 

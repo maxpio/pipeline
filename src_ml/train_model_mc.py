@@ -47,6 +47,7 @@ LP_BOUNDS_PATH = _tp.get('lp_bounds_path', '')
 WEIGHTS_PATH   = _tp['weights_path']
 RESULTS_PATH   = _tp['results_path']
 PLOT_PATH      = _tp['plot_path']
+BOXPLOT_PATH   = _tp.get('boxplot_path', '')
 
 TRAIN_LP_DIR   = os.path.join(LP_DIR, "training")
 VAL_LP_DIR     = os.path.join(LP_DIR, "val")
@@ -124,13 +125,29 @@ def ensure_feature_jsons(lp_subdir: str, label: str):
     if not lp_files:
         raise FileNotFoundError(f"No .lp files found in '{lp_subdir}'")
 
+    existing_lp_bounds = {}
+    if LP_BOUNDS_PATH and os.path.exists(LP_BOUNDS_PATH):
+        import json as _json
+        try:
+            with open(LP_BOUNDS_PATH, 'r') as f:
+                existing_lp_bounds = _json.load(f)
+        except _json.JSONDecodeError:
+            pass
+
     missing = []
     for lp_name in lp_files:
         stem = os.path.splitext(lp_name)[0]
         json_path = os.path.join(FEATURE_DIR, stem + ".json")
+        lp_path  = os.path.join(lp_subdir, lp_name)
+        dec_path = os.path.join(DEC_DIR, stem + ".dec")
+        
+        needs_gen = False
         if not os.path.exists(json_path):
-            lp_path  = os.path.join(lp_subdir, lp_name)
-            dec_path = os.path.join(DEC_DIR, stem + ".dec")
+            needs_gen = True
+        elif LP_BOUNDS_PATH and stem not in existing_lp_bounds and (stem + ".lp") not in existing_lp_bounds:
+            needs_gen = True
+            
+        if needs_gen:
             if not os.path.exists(dec_path):
                 print(f"  [!] Skipping {stem}: no matching .dec file at {dec_path}")
                 continue
@@ -204,9 +221,12 @@ def get_train_val_files():
 # ==========================================
 
 def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
-    """Calculates the total gap closed for a batch of instances."""
+    """Calculates the total gap closed and relative closeness for a batch of instances."""
     gap_sum = 0.0
     gap_count = 0
+    rel_close_sum = 0.0
+    gap_list = []
+    rel_close_list = []
     for file_name, calculated_lagb in zip(actual_files, bounds):
         instance_name = file_name.replace(".json", "")
         
@@ -230,11 +250,21 @@ def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
         if opt_lagb is not None and lpb is not None:
             denominator = lpb - opt_lagb
             if abs(denominator) > 1e-9:
-                gap_sum += (lpb - calculated_lagb) / denominator * 100
+                gap = (lpb - calculated_lagb) / denominator * 100
             else:
-                gap_sum += 100.0
+                gap = 100.0
+            gap_sum += gap
+            gap_list.append(gap)
             gap_count += 1
-    return gap_sum, gap_count
+            
+            if abs(opt_lagb) > 1e-9:
+                rel_close = abs(calculated_lagb - opt_lagb) / abs(opt_lagb) * 100
+            else:
+                rel_close = 0.0
+            rel_close_sum += rel_close
+            rel_close_list.append(rel_close)
+            
+    return gap_sum, gap_count, rel_close_sum, gap_list, rel_close_list
 
 
 def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache, cons_names_cache, device, is_training=True):
@@ -364,6 +394,8 @@ def train():
     val_losses = []
     train_gaps = []
     val_gaps = []
+    train_rel_closes = []
+    val_rel_closes = []
     val_epochs = []
 
     best_val_loss   = float('inf') if IS_MINIMIZATION else -float('inf')
@@ -469,7 +501,10 @@ def train():
             val_epoch_loss = 0.0
             val_epoch_gap_sum = 0.0
             val_epoch_gap_count = 0
+            val_epoch_rel_close_sum = 0.0
             val_processed_count = 0
+            all_val_gaps = []
+            all_val_rel_closes = []
             with torch.no_grad():
                 for batch_files in get_batches(val_files):
                     v_sum_loss, actual_files, bounds, solve_times = process_batch(
@@ -479,9 +514,12 @@ def train():
                     if v_sum_loss is not None:
                         update_solve_times(actual_files, solve_times, is_warmup_phase=True)
                         val_epoch_loss += sum(bounds)
-                        gap_sum, gap_count = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
+                        gap_sum, gap_count, rel_close_sum, gap_list, rel_close_list = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
                         val_epoch_gap_sum   += gap_sum
                         val_epoch_gap_count += gap_count
+                        val_epoch_rel_close_sum += rel_close_sum
+                        all_val_gaps.extend(gap_list)
+                        all_val_rel_closes.extend(rel_close_list)
                         val_processed_count += len(actual_files)
             if val_processed_count > 0:
                 avg_val_loss = val_epoch_loss / val_processed_count
@@ -491,8 +529,26 @@ def train():
                     os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
                     torch.save(model.state_dict(), WEIGHTS_PATH)
                     print(f"[*] Initial best validation score: {best_val_loss:.4f}. Model saved to '{WEIGHTS_PATH}'")
+                    
+                    if BOXPLOT_PATH and all_val_gaps and all_val_rel_closes:
+                        import matplotlib.pyplot as plt
+                        import numpy as np
+                        fig, (ax_gap, ax_rel) = plt.subplots(1, 2, figsize=(12, 6))
+                        ax_gap.boxplot(all_val_gaps)
+                        gap_mean, gap_median = np.mean(all_val_gaps), np.median(all_val_gaps)
+                        ax_gap.set_title(f"Validation Gap Closed\nMean: {gap_mean:.2f}%, Median: {gap_median:.2f}%")
+                        ax_gap.set_ylabel("Gap Closed (%)")
+                        ax_rel.boxplot(all_val_rel_closes)
+                        rel_mean, rel_median = np.mean(all_val_rel_closes), np.median(all_val_rel_closes)
+                        ax_rel.set_title(f"Validation Relative Closeness\nMean: {rel_mean:.2f}%, Median: {rel_median:.2f}%")
+                        ax_rel.set_ylabel("Relative Closeness (%)")
+                        plt.tight_layout()
+                        plt.savefig(BOXPLOT_PATH)
+                        plt.close()
+
+                val_rel_close = val_epoch_rel_close_sum / val_epoch_gap_count if val_epoch_gap_count > 0 else 0.0
                 gap_str = f"{val_epoch_gap_sum / val_epoch_gap_count:.2f}%" if val_epoch_gap_count > 0 else "N/A"
-                print(f"[*] Initial Validation Score: {avg_val_loss:.4f} | Gap Closed: {gap_str}\n")
+                print(f"[*] Initial Validation Score: {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%\n")
 
         # ------------------------------------------------------------------
         # Training Loop
@@ -515,6 +571,7 @@ def train():
             epoch_loss      = 0.0
             epoch_gap_sum   = 0.0
             epoch_gap_count = 0
+            epoch_rel_close_sum = 0.0
             processed_count = 0
 
             current_train_files = train_files.copy()
@@ -542,9 +599,10 @@ def train():
                 optimizer.step()
 
                 epoch_loss      += sum(bounds)
-                gap_sum, gap_count = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
+                gap_sum, gap_count, rel_close_sum, _, _ = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
                 epoch_gap_sum   += gap_sum
                 epoch_gap_count += gap_count
+                epoch_rel_close_sum += rel_close_sum
                 processed_count += actual_bs
 
             if processed_count > 0:
@@ -558,9 +616,11 @@ def train():
 
                 train_gap = epoch_gap_sum / epoch_gap_count if epoch_gap_count > 0 else 0.0
                 train_gaps.append(train_gap)
+                train_rel_close = epoch_rel_close_sum / epoch_gap_count if epoch_gap_count > 0 else 0.0
+                train_rel_closes.append(train_rel_close)
 
                 gap_str = f"{train_gap:.2f}%" if epoch_gap_count > 0 else "N/A"
-                print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str}")
+                print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {train_rel_close:.2f}%")
 
             # ------ Validation ------
             if val_files and EVALUATE_VALIDATION_LOSS and (epoch + 1) % EVALUATE_VALIDATION_EVERY_N_EPOCHS == 0:
@@ -568,7 +628,10 @@ def train():
                 val_epoch_loss      = 0.0
                 val_epoch_gap_sum   = 0.0
                 val_epoch_gap_count = 0
+                val_epoch_rel_close_sum = 0.0
                 val_processed_count = 0
+                all_val_gaps = []
+                all_val_rel_closes = []
                 with torch.no_grad():
                     for batch_files in get_batches(val_files):
                         v_sum_loss, actual_files, bounds, solve_times = process_batch(
@@ -578,9 +641,12 @@ def train():
                         if v_sum_loss is not None:
                             update_solve_times(actual_files, solve_times, is_warmup_phase=is_warmup)
                             val_epoch_loss      += sum(bounds)
-                            gap_sum, gap_count   = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
+                            gap_sum, gap_count, rel_close_sum, gap_list, rel_close_list = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
                             val_epoch_gap_sum   += gap_sum
                             val_epoch_gap_count += gap_count
+                            val_epoch_rel_close_sum += rel_close_sum
+                            all_val_gaps.extend(gap_list)
+                            all_val_rel_closes.extend(rel_close_list)
                             val_processed_count += len(actual_files)
 
                 if val_processed_count > 0:
@@ -593,13 +659,31 @@ def train():
                         os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
                         torch.save(model.state_dict(), WEIGHTS_PATH)
                         print(f"[*] New best validation score: {best_val_loss:.4f}. Model saved to '{WEIGHTS_PATH}'")
+                        
+                        if BOXPLOT_PATH and all_val_gaps and all_val_rel_closes:
+                            import matplotlib.pyplot as plt
+                            import numpy as np
+                            fig, (ax_gap, ax_rel) = plt.subplots(1, 2, figsize=(12, 6))
+                            ax_gap.boxplot(all_val_gaps)
+                            gap_mean, gap_median = np.mean(all_val_gaps), np.median(all_val_gaps)
+                            ax_gap.set_title(f"Validation Gap Closed\nMean: {gap_mean:.2f}%, Median: {gap_median:.2f}%")
+                            ax_gap.set_ylabel("Gap Closed (%)")
+                            ax_rel.boxplot(all_val_rel_closes)
+                            rel_mean, rel_median = np.mean(all_val_rel_closes), np.median(all_val_rel_closes)
+                            ax_rel.set_title(f"Validation Relative Closeness\nMean: {rel_mean:.2f}%, Median: {rel_median:.2f}%")
+                            ax_rel.set_ylabel("Relative Closeness (%)")
+                            plt.tight_layout()
+                            plt.savefig(BOXPLOT_PATH)
+                            plt.close()
 
                     val_gap = val_epoch_gap_sum / val_epoch_gap_count if val_epoch_gap_count > 0 else 0.0
                     val_gaps.append(val_gap)
+                    val_rel_close = val_epoch_rel_close_sum / val_epoch_gap_count if val_epoch_gap_count > 0 else 0.0
+                    val_rel_closes.append(val_rel_close)
                     val_epochs.append(epoch + 1)
 
                     gap_str = f"{val_gap:.2f}%" if val_epoch_gap_count > 0 else "N/A"
-                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str}")
+                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%")
                     if USE_LR_SCHEDULER:
                         scheduler.step(avg_val_loss)
             else:
@@ -607,33 +691,49 @@ def train():
                     if USE_LR_SCHEDULER:
                         scheduler.step(avg_loss)
 
-            # ------ Plotting (DEACTIVATED — re-enable together with evaluate_results) ------
-            # if (epoch + 1) % PLOT_EVERY_N_EPOCHS == 0:
-            #     import matplotlib.pyplot as plt
-            #     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
-            #     ax1.plot(range(1, len(train_losses) + 1), train_losses, label='Train Loss', marker='o', color='blue')
-            #     if EVALUATE_VALIDATION_LOSS and len(val_losses) > 0:
-            #         ax1.plot(val_epochs, val_losses, label='Validation Loss', marker='s', color='orange')
-            #         ax1.set_title(f'Training and Validation Loss (Epoch {epoch + 1})')
-            #     else:
-            #         ax1.set_title(f'Training Loss (Epoch {epoch + 1})')
-            #     ax1.set_ylabel('Avg Lagrangian Bound')
-            #     ax1.legend()
-            #     ax1.grid(True, linestyle='--', alpha=0.7)
-            #     filtered_train_gaps = [g if g >= 0 else float('nan') for g in train_gaps]
-            #     ax2.plot(range(1, len(filtered_train_gaps) + 1), filtered_train_gaps, label='Train Gap Closed', marker='o', color='green')
-            #     if EVALUATE_VALIDATION_LOSS and len(val_gaps) > 0:
-            #         filtered_val_gaps = [g if g >= 0 else float('nan') for g in val_gaps]
-            #         ax2.plot(val_epochs, filtered_val_gaps, label='Validation Gap Closed', marker='s', color='red')
-            #     ax2.set_title('Gap Closed Percentage')
-            #     ax2.set_xlabel('Epoch')
-            #     ax2.set_ylabel('Gap Closed (%)')
-            #     ax2.set_ylim(bottom=PLOT_MIN_GAP_CLOSED)
-            #     ax2.legend()
-            #     ax2.grid(True, linestyle='--', alpha=0.7)
-            #     plt.tight_layout()
-            #     plt.savefig(PLOT_PATH)
-            #     plt.close()
+            # ------ Plotting ------
+            if (epoch + 1) % PLOT_EVERY_N_EPOCHS == 0:
+                import matplotlib.pyplot as plt
+                fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
+                
+                # Plot 1: Losses
+                ax1.plot(range(1, len(train_losses) + 1), train_losses, label='Train Loss', marker='o', color='blue')
+                if EVALUATE_VALIDATION_LOSS and len(val_losses) > 0:
+                    ax1.plot(val_epochs, val_losses, label='Validation Loss', marker='s', color='orange')
+                    ax1.set_title(f'Training and Validation Loss (Epoch {epoch + 1})')
+                else:
+                    ax1.set_title(f'Training Loss (Epoch {epoch + 1})')
+                ax1.set_ylabel('Avg Lagrangian Bound')
+                ax1.legend()
+                ax1.grid(True, linestyle='--', alpha=0.7)
+                
+                # Plot 2: Gap Closed
+                filtered_train_gaps = [g if g >= 0 else float('nan') for g in train_gaps]
+                ax2.plot(range(1, len(filtered_train_gaps) + 1), filtered_train_gaps, label='Train Gap Closed', marker='o', color='green')
+                if EVALUATE_VALIDATION_LOSS and len(val_gaps) > 0:
+                    filtered_val_gaps = [g if g >= 0 else float('nan') for g in val_gaps]
+                    ax2.plot(val_epochs, filtered_val_gaps, label='Validation Gap Closed', marker='s', color='red')
+                ax2.set_title('Gap Closed Percentage')
+                ax2.set_ylabel('Gap Closed (%)')
+                ax2.set_ylim(bottom=PLOT_MIN_GAP_CLOSED)
+                ax2.legend()
+                ax2.grid(True, linestyle='--', alpha=0.7)
+                
+                # Plot 3: Relative Closeness
+                filtered_train_rel = [g if g >= 0 else float('nan') for g in train_rel_closes]
+                ax3.plot(range(1, len(filtered_train_rel) + 1), filtered_train_rel, label='Train Rel Closeness', marker='o', color='purple')
+                if EVALUATE_VALIDATION_LOSS and len(val_rel_closes) > 0:
+                    filtered_val_rel = [g if g >= 0 else float('nan') for g in val_rel_closes]
+                    ax3.plot(val_epochs, filtered_val_rel, label='Validation Rel Closeness', marker='s', color='brown')
+                ax3.set_title('Relative Closeness to Optimal')
+                ax3.set_xlabel('Epoch')
+                ax3.set_ylabel('Relative Closeness (%)')
+                ax3.legend()
+                ax3.grid(True, linestyle='--', alpha=0.7)
+                
+                plt.tight_layout()
+                plt.savefig(PLOT_PATH)
+                plt.close()
 
         # ------------------------------------------------------------------
         # Final Validation
@@ -655,7 +755,7 @@ def train():
                     )
                     if v_sum_loss is not None:
                         val_loss    += sum(bounds)
-                        gap_sum, gap_count = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
+                        gap_sum, gap_count, _, _, _ = compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict)
                         val_gap_sum   += gap_sum
                         val_gap_count += gap_count
                         val_processed += len(actual_files)

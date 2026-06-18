@@ -261,6 +261,9 @@ def main():
     parser.add_argument("--lp-dir", type=Path,
                         default=config['pipeline_settings'].get('lp_dir'),
                         help="Directory containing .lp files")
+    parser.add_argument("--eval-set", type=str,
+                        default=config['pipeline_settings'].get('eval_set', 'val'),
+                        help="Subdirectory of lp_dir to evaluate (e.g. val, test)")
     parser.add_argument("--dec-dir", type=Path,
                         default=config['pipeline_settings'].get('dec_dir'),
                         help="Directory containing .dec files")
@@ -308,6 +311,9 @@ def main():
         sys.exit("Error: dec_dir not provided in arguments or config.yaml")
 
     lp_dir = Path(args.lp_dir).resolve()
+    if args.eval_set:
+        lp_dir = lp_dir / args.eval_set
+        
     dec_dir = Path(args.dec_dir).resolve()
 
     if not lp_dir.is_dir():
@@ -320,13 +326,9 @@ def main():
         sys.exit(f"Error: GCG executable not found: {args.gcg}")
 
     # Resolve which instances to run
-    instance_files = resolve_instance_list(
-        lp_dir=lp_dir,
-        instance_ratio=args.instance_ratio,
-        required_instances=args.required_instances,
-        random_seed=args.seed,
-        required_prefix=args.required_prefix
-    )
+    instance_files = sorted(list(lp_dir.glob("*.lp")))
+    if not instance_files:
+        sys.exit(f"Error: No .lp files found in {lp_dir}")
 
     # Build (lp_file, dec_file) pairs, filtering out missing .dec files
     instance_pairs = []
@@ -345,8 +347,7 @@ def main():
     print(f"  Full Pipeline — Batch Mode")
     print(f"  LP dir:    {lp_dir}")
     print(f"  DEC dir:   {dec_dir}")
-    print(f"  Instances: {n_instances} selected "
-          f"(ratio={args.instance_ratio}, required={len(args.required_instances or [])})")
+    print(f"  Instances: {n_instances} selected from {args.eval_set} set")
     if is_batch:
         print(f"  Cores:     {num_cores}  |  GPU batch size: {args.gpu_batch_size}")
     print("=" * 70)
