@@ -38,6 +38,7 @@ else:
     RESULTS_JSON_FILE = os.path.join(GA_DIR, "results.json")
 
 # Generation Options
+PROCESS_SPLITS = config.get("process_splits", False)
 PREFIX_FILTER = config.get("prefix_filter", "gap")
 GENERATE_SUBOPT = config.get("generate_subopt", True)
 SUBOPT_PERCENT = config.get("subopt_percent", 0.995)
@@ -288,9 +289,16 @@ if __name__ == "__main__":
     if GENERATE_RANDOM:
         os.makedirs(RANDOM_DUAL_VALUES_DIR, exist_ok=True)
         
-    lp_files = glob.glob(os.path.join(LP_DIR, "*.lp"))
-    if not lp_files:
-        print(f"No .lp files found in {LP_DIR}")
+    if PROCESS_SPLITS:
+        lp_files = []
+        for split in ['training', 'val', 'test']:
+            lp_files.extend(glob.glob(os.path.join(LP_DIR, split, "*.lp")))
+        if not lp_files:
+            print(f"No .lp files found in subdirectories (training, val, test) of {LP_DIR}")
+    else:
+        lp_files = glob.glob(os.path.join(LP_DIR, "*.lp"))
+        if not lp_files:
+            print(f"No .lp files found in {LP_DIR}")
         
     if PREFIX_FILTER:
         lp_files = [f for f in lp_files if os.path.basename(f).startswith(PREFIX_FILTER)]

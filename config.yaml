@@ -3,15 +3,29 @@
 # --- Paths ---
 # Paths are relative to the project's base directory
 paths:
-  feature_dir: "data/GA/featureinf"
-  lp_dir: "data/GA/lpfiles"
-  labels_path: "data/GA/labels/labels.json"
-  weights_path: "/home/max/master_ths/weights/gaptest.pth"
-  results_path: "results.json"
-  plot_path: "training_loss_plot1.png"
+  feature_dir: "data/GAC/featureinf"
+  lp_dir: "data/GAC/lpfiles"
+  labels_path: "data/GAC/lagrangian_bounds.json"
+  lp_bounds_path: "data/GAC/lp_bounds.json"
+  weights_path: "/home/max/master_ths/data/GAC/weights/gaptest1.pth"
+  results_path: "/home/max/master_ths/data/GAC/results.json"
+  plot_path: "/home/max/master_ths/data/GAC/training_loss_plot1.png"
   gcg_executable: "/home/max/gcg/build/gcg-linux-release/bin/gcg"
   log_dir: "logs"
   duals_dir: "predicted_duals"
+
+# --- Training Paths (absolute) ---
+# lp_dir must contain three subdirectories: training/, val/, test/
+# feature_dir is where the .json ML input files are stored/generated
+training_paths:
+  lp_dir: "/home/max/master_ths/data/GAC/lpfiles"
+  dec_dir: "/home/max/master_ths/data/GAC/decfiles"
+  feature_dir: "/home/max/master_ths/data/GAC/featureinf"
+  labels_path: "/home/max/master_ths/data/GAC/lagrangian_bounds.json"
+  lp_bounds_path: "/home/max/master_ths/data/GAC/lp_bounds.json"
+  weights_path: "/home/max/master_ths/data/GAC/weights/gaptest1.pth"
+  results_path: "/home/max/master_ths/data/GAC/results.json"
+  plot_path: "/home/max/master_ths/data/GAC/training_loss_plot.png"
 
 # --- Model Architecture ---
 model_architecture:
@@ -23,15 +37,13 @@ model_architecture:
   # The input (feature_embedding_size) and output (1) dimensions are dynamically added
   decoder_mlp_dims: [64]
   num_layers: 2
-  dropout: 0.4
+  dropout: 0.2
 
 # --- Training Parameters ---
 training_parameters:
   load_pretrained: True
-  learning_rate: 1e-5
-  epochs: 100000
-  train_ratio: 0.9
-  val_ratio: 0.1
+  learning_rate: 1e-6
+  epochs: 100
   use_random_subset: False
   random_subset_ratio: 0.3
   random_seed: 31343564334843643257234978
@@ -54,7 +66,7 @@ parallelization_batching:
 # --- Caching Settings ---
 caching_settings:
   cache_graph: True
-  cache_lp_files: False
+  cache_lag_relax: False  # Cache SCIP LagrangianRelaxation objects in worker processes
 
 # --- SCIP Settings ---
 scip_settings:
@@ -66,15 +78,15 @@ scip_settings:
 # --- Pipeline Settings ---
 pipeline_settings:
   timeout: 3600
-  lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
-  dec_dir: "/home/max/master_ths/data/GAPD/decfiles"
-  duals_dir: "/home/max/master_ths/data/GA/predicted_duals"
-  duals_dir_read: "/home/max/master_ths/data/GAPD/optdualvalues"
-  log_dir: "/home/max/master_ths/data/GAPD/logs"
-  experiments_dir: "/home/max/master_ths/data/GAPD/experiments"
-  experiment_json_name: "optD.json"
-  skip_prediction: True
-  instance_ratio: 1.0  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
+  lp_dir: "/home/max/master_ths/data/GAC/lpfiles"
+  dec_dir: "/home/max/master_ths/data/GAC/decfiles"
+  duals_dir: "/home/max/master_ths/data/GAC/predicted_duals"
+  duals_dir_read: "/home/max/master_ths/data/GAC/predicted_duals"
+  log_dir: "/home/max/master_ths/data/GAC/logs"
+  experiments_dir: "/home/max/master_ths/data/GAC/experiments"
+  experiment_json_name: "test.json"
+  skip_prediction: False
+  instance_ratio: 0.1  # Ratio (0.0–1.0) of instances from lp_dir to process (randomly sampled)
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
   required_prefix: ""  # Instances with this prefix are always included
   random_seed: 42  # Seed for reproducible random sampling of instances
@@ -115,19 +127,20 @@ visualization_settings:
 
 # --- Duals Generation Settings ---
 duals_generation_settings:
-  lp_dir: "/home/max/master_ths/data/GAPD/lpfiles"
-  results_file: "/home/max/master_ths/data/GAPD/results.json"
+  lp_dir: "/home/max/master_ths/data/GAC/lpfiles"
+  results_file: "/home/max/master_ths/data/GAC/lagrangian_bounds.json"
+  process_splits: True
   prefix_filter: ""
   generate_subopt: True
-  subopt_percent: 0.995
+  subopt_percent: 0.98
   generate_random: True
   random_gauss_mu: 0.0
   random_gauss_sigma: 5.0
   multicore_solving: True
   max_workers: 4
   short_log_output: True
-  max_iters: 400
-  initial_step_size: 4.0
+  max_iters: 100
+  initial_step_size: 10.0
   no_improve_limit: 4
   step_size_shrink: 0.5
   tolerance: 1.0e-6
