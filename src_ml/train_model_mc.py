@@ -224,6 +224,9 @@ def get_train_val_files():
 
 def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
     """Calculates the total gap closed and relative closeness for a batch of instances."""
+    if not labels_dict or not lp_bounds_dict:
+        return 0.0, 0, 0.0, [], []
+
     gap_sum = 0.0
     gap_count = 0
     rel_close_sum = 0.0
@@ -357,6 +360,7 @@ def train():
     else:
         print(f"Warning: LP bounds file not found at {LP_BOUNDS_PATH}. Gap Closed metric will not be computed for instances missing it.\n")
 
+    has_labels_and_bounds = bool(labels_dict and lp_bounds_dict)
 
     print(f"\n--- Dataset Loaded ---")
     print(f"Training instances:   {len(train_files)}")
@@ -555,9 +559,12 @@ def train():
                         plt.savefig(BOXPLOT_PATH)
                         plt.close()
 
-                val_rel_close = val_epoch_rel_close_sum / val_epoch_gap_count if val_epoch_gap_count > 0 else 0.0
-                gap_str = f"{val_epoch_gap_sum / val_epoch_gap_count:.2f}%" if val_epoch_gap_count > 0 else "N/A"
-                print(f"[*] Initial Validation Score: {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%\n")
+                if has_labels_and_bounds:
+                    val_rel_close = val_epoch_rel_close_sum / val_epoch_gap_count if val_epoch_gap_count > 0 else 0.0
+                    gap_str = f"{val_epoch_gap_sum / val_epoch_gap_count:.2f}%" if val_epoch_gap_count > 0 else "N/A"
+                    print(f"[*] Initial Validation Score: {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%\n")
+                else:
+                    print(f"[*] Initial Validation Score: {avg_val_loss:.4f}\n")
 
         # ------------------------------------------------------------------
         # Training Loop
@@ -628,8 +635,11 @@ def train():
                 train_rel_close = epoch_rel_close_sum / epoch_gap_count if epoch_gap_count > 0 else 0.0
                 train_rel_closes.append(train_rel_close)
 
-                gap_str = f"{train_gap:.2f}%" if epoch_gap_count > 0 else "N/A"
-                print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {train_rel_close:.2f}%")
+                if has_labels_and_bounds:
+                    gap_str = f"{train_gap:.2f}%" if epoch_gap_count > 0 else "N/A"
+                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {train_rel_close:.2f}%")
+                else:
+                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f}")
 
             # ------ Validation ------
             if val_files and EVALUATE_VALIDATION_LOSS and (epoch + 1) % EVALUATE_VALIDATION_EVERY_N_EPOCHS == 0:
@@ -691,8 +701,11 @@ def train():
                     val_rel_closes.append(val_rel_close)
                     val_epochs.append(epoch + 1)
 
-                    gap_str = f"{val_gap:.2f}%" if val_epoch_gap_count > 0 else "N/A"
-                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%")
+                    if has_labels_and_bounds:
+                        gap_str = f"{val_gap:.2f}%" if val_epoch_gap_count > 0 else "N/A"
+                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%")
+                    else:
+                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f}")
                     if USE_LR_SCHEDULER:
                         scheduler.step(avg_val_loss)
             else:
@@ -703,7 +716,10 @@ def train():
             # ------ Plotting ------
             if (epoch + 1) % PLOT_EVERY_N_EPOCHS == 0:
                 import matplotlib.pyplot as plt
-                fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
+                if has_labels_and_bounds:
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
+                else:
+                    fig, ax1 = plt.subplots(1, 1, figsize=(10, 5))
                 
                 # Plot 1: Losses
                 ax1.plot(range(1, len(train_losses) + 1), train_losses, label='Train Loss', marker='o', color='blue')
@@ -713,32 +729,37 @@ def train():
                 else:
                     ax1.set_title(f'Training Loss (Epoch {epoch + 1})')
                 ax1.set_ylabel('Avg Lagrangian Bound')
-                ax1.legend()
+                if has_labels_and_bounds:
+                    ax1.legend()
+                else:
+                    ax1.set_xlabel('Epoch')
+                    ax1.legend()
                 ax1.grid(True, linestyle='--', alpha=0.7)
                 
-                # Plot 2: Gap Closed
-                filtered_train_gaps = [g if g >= 0 else float('nan') for g in train_gaps]
-                ax2.plot(range(1, len(filtered_train_gaps) + 1), filtered_train_gaps, label='Train Gap Closed', marker='o', color='green')
-                if EVALUATE_VALIDATION_LOSS and len(val_gaps) > 0:
-                    filtered_val_gaps = [g if g >= 0 else float('nan') for g in val_gaps]
-                    ax2.plot(val_epochs, filtered_val_gaps, label='Validation Gap Closed', marker='s', color='red')
-                ax2.set_title('Gap Closed Percentage')
-                ax2.set_ylabel('Gap Closed (%)')
-                ax2.set_ylim(bottom=PLOT_MIN_GAP_CLOSED)
-                ax2.legend()
-                ax2.grid(True, linestyle='--', alpha=0.7)
-                
-                # Plot 3: Relative Closeness
-                filtered_train_rel = [g if g >= 0 else float('nan') for g in train_rel_closes]
-                ax3.plot(range(1, len(filtered_train_rel) + 1), filtered_train_rel, label='Train Rel Closeness', marker='o', color='purple')
-                if EVALUATE_VALIDATION_LOSS and len(val_rel_closes) > 0:
-                    filtered_val_rel = [g if g >= 0 else float('nan') for g in val_rel_closes]
-                    ax3.plot(val_epochs, filtered_val_rel, label='Validation Rel Closeness', marker='s', color='brown')
-                ax3.set_title('Relative Closeness to Optimal')
-                ax3.set_xlabel('Epoch')
-                ax3.set_ylabel('Relative Closeness (%)')
-                ax3.legend()
-                ax3.grid(True, linestyle='--', alpha=0.7)
+                if has_labels_and_bounds:
+                    # Plot 2: Gap Closed
+                    filtered_train_gaps = [g if g >= 0 else float('nan') for g in train_gaps]
+                    ax2.plot(range(1, len(filtered_train_gaps) + 1), filtered_train_gaps, label='Train Gap Closed', marker='o', color='green')
+                    if EVALUATE_VALIDATION_LOSS and len(val_gaps) > 0:
+                        filtered_val_gaps = [g if g >= 0 else float('nan') for g in val_gaps]
+                        ax2.plot(val_epochs, filtered_val_gaps, label='Validation Gap Closed', marker='s', color='red')
+                    ax2.set_title('Gap Closed Percentage')
+                    ax2.set_ylabel('Gap Closed (%)')
+                    ax2.set_ylim(bottom=PLOT_MIN_GAP_CLOSED)
+                    ax2.legend()
+                    ax2.grid(True, linestyle='--', alpha=0.7)
+                    
+                    # Plot 3: Relative Closeness
+                    filtered_train_rel = [g if g >= 0 else float('nan') for g in train_rel_closes]
+                    ax3.plot(range(1, len(filtered_train_rel) + 1), filtered_train_rel, label='Train Rel Closeness', marker='o', color='purple')
+                    if EVALUATE_VALIDATION_LOSS and len(val_rel_closes) > 0:
+                        filtered_val_rel = [g if g >= 0 else float('nan') for g in val_rel_closes]
+                        ax3.plot(val_epochs, filtered_val_rel, label='Validation Rel Closeness', marker='s', color='brown')
+                    ax3.set_title('Relative Closeness to Optimal')
+                    ax3.set_xlabel('Epoch')
+                    ax3.set_ylabel('Relative Closeness (%)')
+                    ax3.legend()
+                    ax3.grid(True, linestyle='--', alpha=0.7)
                 
                 plt.tight_layout()
                 plt.savefig(PLOT_PATH)
@@ -771,8 +792,11 @@ def train():
 
             if val_processed > 0:
                 avg_val_loss = val_loss / val_processed
-                gap_str = f"{val_gap_sum / val_gap_count:.2f}%" if val_gap_count > 0 else "N/A"
-                print(f"Final Validation | Avg Lagrangian Bound: {avg_val_loss:.4f} | Gap Closed: {gap_str}")
+                if has_labels_and_bounds:
+                    gap_str = f"{val_gap_sum / val_gap_count:.2f}%" if val_gap_count > 0 else "N/A"
+                    print(f"Final Validation | Avg Lagrangian Bound: {avg_val_loss:.4f} | Gap Closed: {gap_str}")
+                else:
+                    print(f"Final Validation | Avg Lagrangian Bound: {avg_val_loss:.4f}")
 
                 is_better = (avg_val_loss < best_val_loss) if IS_MINIMIZATION else (avg_val_loss > best_val_loss)
                 if EVALUATE_VALIDATION_LOSS and is_better:

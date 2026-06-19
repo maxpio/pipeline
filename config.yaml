@@ -77,9 +77,9 @@ feature_extraction:
 prediction_parameters:
   timeout: 3600
   lpfile_subdir: "test"
-  dualvalue_type: "predicted"
-  experiment_json_name: "testpredict.json"
-  skip_prediction: False
+  dualvalue_type: "optimal"
+  experiment_json_name: "testopt.json"
+  skip_prediction: True
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
   required_prefix: ""  # Instances with this prefix are always included
   
@@ -109,5 +109,6 @@ visualization_settings:
   experiment_files:
     - "testraw.json"
     - "testpredict.json"
+    -  "testopt.json"
 
 
