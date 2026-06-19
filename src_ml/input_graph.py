@@ -9,7 +9,12 @@ def create_bipartite_graph(json_path):
     """
     with open(json_path, 'r') as f:
         data_dict = json.load(f)
+    return create_bipartite_graph_from_dict(data_dict)
 
+def create_bipartite_graph_from_dict(data_dict):
+    """
+    Constructs a bipartite HeteroData graph for PyTorch Geometric directly from a dictionary.
+    """
     variables = data_dict.get("variables", {})
     constraints = data_dict.get("constraints", {})
     edges = data_dict.get("edges", [])

@@ -87,7 +87,7 @@ class BatchedSubgradientLoss(torch.autograd.Function):
     @staticmethod
     def forward(ctx, lambda_raw_batch, eq_flags_batch, batch_sizes, worker_args_list, executors, file_to_worker_map, mip_gap):
         # 1. Enforce non-negativity for inequality constraints
-        actual_multipliers = torch.where(eq_flags_batch == 1.0, lambda_raw_batch, torch.relu(lambda_raw_batch))
+        actual_multipliers = torch.where(eq_flags_batch > 0.5, lambda_raw_batch, torch.relu(lambda_raw_batch))
         
         # Pull to CPU for fast iteration when splitting and zipping
         actual_multipliers_cpu = actual_multipliers.detach().cpu()
@@ -138,7 +138,7 @@ class BatchedSubgradientLoss(torch.autograd.Function):
         grad_multipliers = -subgrad_tensor * grad_loss
         
         # KKT Fix to prevent weights plummeting for slack inequalities
-        zero_grad_mask = (eq_flags_batch == 0.0) & (actual_multipliers <= 1e-6) & (subgrad_tensor < 0)
+        zero_grad_mask = (eq_flags_batch < 0.5) & (actual_multipliers <= 1e-6) & (subgrad_tensor < 0)
         grad_multipliers[zero_grad_mask] = 0.0
         
         # Match the forward inputs (only the first requires grad)

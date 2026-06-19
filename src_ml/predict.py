@@ -28,7 +28,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(CURRENT_DIR)
 sys.path.append(BASE_DIR)
 
-from src_ml.input_graph import create_bipartite_graph
+from src_ml.input_graph import create_bipartite_graph, create_bipartite_graph_from_dict
 from src_ml.model import LagrangianMultiplierModel
 from src_ml.single_runner import run_single_instance
 
@@ -72,18 +72,8 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # --- Write feature dict to a temp JSON so create_bipartite_graph can read it ---
-    import tempfile
-    fd, tmp_json = tempfile.mkstemp(suffix=".json", text=True)
-    try:
-        with os.fdopen(fd, 'w') as f:
-            json.dump(feature_dict, f)
-
-        # Build graph
-        graph_data = create_bipartite_graph(tmp_json).to(device)
-    finally:
-        if os.path.exists(tmp_json):
-            os.remove(tmp_json)
+    # Build graph directly from dictionary
+    graph_data = create_bipartite_graph_from_dict(feature_dict).to(device)
 
     # --- Load model ---
     model = LagrangianMultiplierModel(
@@ -106,7 +96,7 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
         lambda_raw, dualized_mask, eq_flags = model(batch_data)
 
         # Enforce non-negativity for inequality constraints
-        actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+        actual_multipliers = torch.where(eq_flags > 0.5, lambda_raw, torch.relu(lambda_raw))
 
     actual_multipliers = actual_multipliers.cpu().tolist()
     mask_list = dualized_mask.cpu().tolist()
@@ -227,9 +217,9 @@ def main():
     parser.add_argument("--dualvalue-type", type=str,
                         default=config['prediction_parameters'].get('dualvalue_type', 'predicted'),
                         help="Type of dual values to use (e.g., predicted, optimal, random)")
-    parser.add_argument("--skip-prediction", action="store_true",
+    parser.add_argument("--skip-prediction", action=argparse.BooleanOptionalAction,
                         default=config['prediction_parameters'].get('skip_prediction', False),
-                        help="Skip prediction step and use saved duals (only applies if dualvalue-type is 'predicted')")
+                        help="Skip prediction step and use saved duals (adds --no-skip-prediction, only applies if dualvalue-type is 'predicted')")
     parser.add_argument("--weights", type=Path, default=Path(DEFAULT_WEIGHTS_PATH),
                         help="Path to trained model weights (.pth)")
     parser.add_argument("--gcg", type=Path, default=Path(DEFAULT_GCG_EXECUTABLE),
@@ -341,11 +331,11 @@ def main():
                     quiet=args.quiet,
                     extract_lp_bound=False
                 )
-            mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
-            with open(dual_file, 'w') as f:
-                f.write(dual_txt)
-            if not args.quiet:
-                print(f"  Predicted duals saved to: {dual_file}")
+                mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
+                with open(dual_file, 'w') as f:
+                    f.write(dual_txt)
+                if not args.quiet:
+                    print(f"  Predicted duals saved to: {dual_file}")
         else:
             dual_file.touch()
             if not args.quiet:
@@ -382,7 +372,6 @@ def main():
         #  BATCH PATH  (parallel feature extraction, batched GPU, parallel GCG)
         # ====================================================================
         from concurrent.futures import ProcessPoolExecutor, as_completed
-        import tempfile as _tempfile
 
         use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
 
@@ -462,14 +451,7 @@ def main():
                 cons_names_per_instance = []
                 for name in ordered_names:
                     fd_dict = feature_dicts[name]
-                    fd, tmp_json = _tempfile.mkstemp(suffix=".json", text=True)
-                    try:
-                        with os.fdopen(fd, 'w') as f:
-                            json.dump(fd_dict, f)
-                        graph_data = create_bipartite_graph(tmp_json).to(device)
-                    finally:
-                        if os.path.exists(tmp_json):
-                            os.remove(tmp_json)
+                    graph_data = create_bipartite_graph_from_dict(fd_dict).to(device)
                     graphs.append(graph_data)
                     cons_names_per_instance.append(list(fd_dict.get("constraints", {}).keys()))
 
@@ -477,7 +459,7 @@ def main():
                     with torch.no_grad():
                         batch_data = Batch.from_data_list(graphs).to(device)
                         lambda_raw, dualized_mask, eq_flags = model(batch_data)
-                        actual_multipliers = torch.where(eq_flags == 1.0, lambda_raw, torch.relu(lambda_raw))
+                        actual_multipliers = torch.where(eq_flags > 0.5, lambda_raw, torch.relu(lambda_raw))
 
                     # Un-batch predictions
                     actual_multipliers_cpu = actual_multipliers.cpu()

@@ -270,7 +270,7 @@ def process_instance(lp_file):
     if not SHORT_LOG_OUTPUT:
         print(f"\n--- Finished {filename} ---")
         
-    return filename, best_obj
+    return base_name, best_obj
 
 # --- 5. EXECUTION ---
 if __name__ == "__main__":

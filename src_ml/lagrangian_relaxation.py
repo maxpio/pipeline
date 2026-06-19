@@ -82,9 +82,9 @@ class LagrangianRelaxation:
                     vals_in_cons = self.model.getConsVals(cons)
                     for v, val in zip(vars_in_cons, vals_in_cons):
                         coeffs[v.name] = val
-                except AttributeError:
-                    print(f"Warning: Could not extract coefficients for '{cons.name}' directly. "
-                          f"Ensure your PySCIPOpt build supports getConsVars/getConsVals.")
+                except AttributeError as e:
+                    raise RuntimeError(f"Could not extract coefficients for '{cons.name}' directly. "
+                                       f"Ensure your PySCIPOpt build supports getConsVars/getConsVals.") from e
                 
                 # Store constraint formulation
                 self.hard_conss[cons.name] = {

@@ -45,16 +45,15 @@ model_architecture:
 # --- Training Parameters ---
 training_parameters:
   load_pretrained: True
-  learning_rate: 1e-5
+  learning_rate: 2e-5
   epochs: 100
-  is_minimization: True # Whether the goal is to minimize (True) or maximize (False) the validation metric
   evaluate_validation_loss: True
   evaluate_validation_every_n_epochs: 25
   use_gradient_clipping: True
   gradient_clipping_max_norm: 80.0
-  use_lr_scheduler: False
-  lr_scheduler_factor: 0.5 # multiplicative factor applied to the learning rate when patience runs out
-  lr_scheduler_patience: 15 #  number of epochs the scheduler will wait for the loss to improve before it reduces the learning rate
+  use_lr_scheduler: True
+  lr_scheduler_factor: 0.3 # multiplicative factor applied to the learning rate when patience runs out
+  lr_scheduler_patience: 20 #  number of epochs the scheduler will wait for the loss to improve before it reduces the learning rate
   plot_min_gap_closed: 65.0
   use_random_subset: False
   random_subset_ratio: 0.3
@@ -63,7 +62,7 @@ training_parameters:
   scip_settings:
     disable_presolve: False
     disable_heuristics: False
-    mip_gap: 0.05
+    mip_gap: 0.01
 
   caching_settings:
     cache_graph: True
@@ -77,8 +76,8 @@ feature_extraction:
 prediction_parameters:
   timeout: 3600
   lpfile_subdir: "test"
-  dualvalue_type: "optimal"
-  experiment_json_name: "testopt.json"
+  dualvalue_type: "predicted"
+  experiment_json_name: "testpredictedonlystab.json"
   skip_prediction: True
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
   required_prefix: ""  # Instances with this prefix are always included
@@ -98,7 +97,7 @@ prediction_parameters:
     smoothing_improvement_threshold: 200.0
     n_perturbation_rounds: 0
     perturbation_percent: 0.007
-    add_round_0_columns: "True"
+    add_round_0_columns: "False"
     large_log: "True"
     use_bigm_artificials: "False"
     bigm_value: 1000000.0
@@ -110,5 +109,7 @@ visualization_settings:
     - "testraw.json"
     - "testpredict.json"
     -  "testopt.json"
+    - "testpredictedonlystab.json"
+    - "testpredicted.json"
 
 

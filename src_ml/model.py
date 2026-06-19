@@ -200,7 +200,7 @@ class Decoder(nn.Module):
 
         # 1. Filtering: Create a boolean mask for constraints where dualized == 1.0
         # This implicitly drops all variables (since we only pass cons_h) and non-relaxed constraints
-        mask = dualized_flags == 1.0
+        mask = dualized_flags > 0.5
 
         filtered_h = cons_h[mask]
         filtered_pi = pi_vals[mask]

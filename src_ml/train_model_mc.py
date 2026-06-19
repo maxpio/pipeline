@@ -82,7 +82,6 @@ GRADIENT_CLIPPING_MAX_NORM         = config['training_parameters']['gradient_cli
 USE_LR_SCHEDULER                   = config['training_parameters']['use_lr_scheduler']
 LR_SCHEDULER_FACTOR                = config['training_parameters']['lr_scheduler_factor']
 LR_SCHEDULER_PATIENCE              = config['training_parameters']['lr_scheduler_patience']
-IS_MINIMIZATION                    = config['training_parameters'].get('is_minimization', True)
 
 # ==========================================
 # PARALLELIZATION & BATCHING
@@ -146,7 +145,7 @@ def ensure_feature_jsons(lp_subdir: str, label: str):
         needs_gen = False
         if not os.path.exists(json_path):
             needs_gen = True
-        elif LP_BOUNDS_PATH and stem not in existing_lp_bounds and (stem + ".lp") not in existing_lp_bounds:
+        elif LP_BOUNDS_PATH and stem not in existing_lp_bounds:
             needs_gen = True
             
         if needs_gen:
@@ -235,22 +234,17 @@ def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
     for file_name, calculated_lagb in zip(actual_files, bounds):
         instance_name = file_name.replace(".json", "")
         
-        lagb_key = instance_name + ".lp" if (instance_name + ".lp") in labels_dict else instance_name
         opt_lagb = None
         lpb = None
         
-        if lagb_key in labels_dict:
-            if isinstance(labels_dict[lagb_key], dict):
-                opt_lagb = labels_dict[lagb_key].get("lagb")
-                lpb = labels_dict[lagb_key].get("lpb")
+        if instance_name in labels_dict:
+            if isinstance(labels_dict[instance_name], dict):
+                opt_lagb = labels_dict[instance_name].get("lagb")
+                lpb = labels_dict[instance_name].get("lpb")
             else:
-                opt_lagb = labels_dict[lagb_key]
+                opt_lagb = labels_dict[instance_name]
                 if instance_name in lp_bounds_dict:
                     lpb = lp_bounds_dict[instance_name]
-                else:
-                    # check with .lp extension just in case
-                    if (instance_name + ".lp") in lp_bounds_dict:
-                        lpb = lp_bounds_dict[instance_name + ".lp"]
                     
         if opt_lagb is not None and lpb is not None:
             denominator = lpb - opt_lagb
@@ -343,6 +337,23 @@ def train():
 
     # --- Ensure all feature .json files exist; generate missing ones ---
     train_files, val_files = get_train_val_files()
+
+    # Determine validation metric direction based on the first LP file
+    # The validation metric is the opposite of the original problem sense (dual bound)
+    IS_MINIMIZATION = True
+    if train_files:
+        first_lp = os.path.join(TRAIN_LP_DIR, train_files[0].replace('.json', '.lp'))
+        if os.path.exists(first_lp):
+            with open(first_lp, 'r') as f:
+                for line in f:
+                    line_lower = line.strip().lower()
+                    if line_lower:
+                        if line_lower.startswith('max'):
+                            IS_MINIMIZATION = True
+                            break
+                        elif line_lower.startswith('min'):
+                            IS_MINIMIZATION = False
+                            break
 
 
     # Load labels for Gap Closed calculation
@@ -637,9 +648,12 @@ def train():
 
                 if has_labels_and_bounds:
                     gap_str = f"{train_gap:.2f}%" if epoch_gap_count > 0 else "N/A"
-                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {train_rel_close:.2f}%")
+                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | LR: {optimizer.param_groups[0]['lr']:.1e} | Avg Lagrangian Bound (Train): {avg_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {train_rel_close:.2f}%")
                 else:
-                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Train): {avg_loss:.4f}")
+                    print(f"Epoch {epoch+1:02d}/{EPOCHS} | LR: {optimizer.param_groups[0]['lr']:.1e} | Avg Lagrangian Bound (Train): {avg_loss:.4f}")
+
+                if USE_LR_SCHEDULER:
+                    scheduler.step(avg_loss)
 
             # ------ Validation ------
             if val_files and EVALUATE_VALIDATION_LOSS and (epoch + 1) % EVALUATE_VALIDATION_EVERY_N_EPOCHS == 0:
@@ -703,15 +717,9 @@ def train():
 
                     if has_labels_and_bounds:
                         gap_str = f"{val_gap:.2f}%" if val_epoch_gap_count > 0 else "N/A"
-                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%")
+                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | LR: {optimizer.param_groups[0]['lr']:.1e} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f} | Gap Closed: {gap_str} | Rel Closeness: {val_rel_close:.2f}%")
                     else:
-                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f}")
-                    if USE_LR_SCHEDULER:
-                        scheduler.step(avg_val_loss)
-            else:
-                if not EVALUATE_VALIDATION_LOSS and processed_count > 0:
-                    if USE_LR_SCHEDULER:
-                        scheduler.step(avg_loss)
+                        print(f"Epoch {epoch+1:02d}/{EPOCHS} | LR: {optimizer.param_groups[0]['lr']:.1e} | Avg Lagrangian Bound (Val):   {avg_val_loss:.4f}")
 
             # ------ Plotting ------
             if (epoch + 1) % PLOT_EVERY_N_EPOCHS == 0:
