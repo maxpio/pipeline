@@ -2,13 +2,6 @@ import os
 import glob
 import random
 import shutil
-
-# Split ratios (must sum to 1.0)
-TRAIN_RATIO = 0.8
-VAL_RATIO = 0.1
-TEST_RATIO = 0.1
-RANDOM_SEED = 42
-
 import yaml
 
 def read_config():
@@ -25,10 +18,21 @@ def read_config():
 def main():
     config = read_config()
     try:
-        lpfiles_dir = config["training_paths"]["lp_dir"]
+        data_dir = config["general_settings"]["data_dir"]
+        lpfiles_dir = os.path.join(data_dir, "lpfiles")
+        random_seed = config["general_settings"].get("random_seed", 42)
     except KeyError:
-        raise ValueError("training_paths -> lp_dir is not defined in config.yaml")
+        raise ValueError("general_settings -> data_dir is not defined in config.yaml")
         
+    split_config = config.get("split_parameters", {})
+    train_ratio = split_config.get("train_ratio", 0.8)
+    val_ratio = split_config.get("val_ratio", 0.1)
+    test_ratio = split_config.get("test_ratio", 0.1)
+    
+    # Verify split ratios sum to approximately 1.0
+    if not abs((train_ratio + val_ratio + test_ratio) - 1.0) < 1e-9:
+        print(f"Warning: Split ratios do not sum to 1.0 (sum: {train_ratio + val_ratio + test_ratio})")
+
     if not os.path.isdir(lpfiles_dir):
         raise FileNotFoundError(f"lp_dir not found: {lpfiles_dir}")
         
@@ -40,14 +44,14 @@ def main():
         
     print(f"Found {len(lp_files)} .lp files in {lpfiles_dir}")
     
-    # Shuffle files with a fixed seed for reproducibility
-    random.seed(RANDOM_SEED)
+    # Shuffle files with a seed for reproducibility
+    random.seed(random_seed)
     random.shuffle(lp_files)
     
     # Define split ratios
     n_files = len(lp_files)
-    train_end = int(n_files * TRAIN_RATIO)
-    val_end = train_end + int(n_files * VAL_RATIO)
+    train_end = int(n_files * train_ratio)
+    val_end = train_end + int(n_files * val_ratio)
     
     splits = {
         "training": lp_files[:train_end],

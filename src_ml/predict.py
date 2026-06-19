@@ -47,8 +47,9 @@ DECODER_MLP_DIMS = config['model_architecture']['decoder_mlp_dims']
 NUM_LAYERS = config['model_architecture']['num_layers']
 DROPOUT = config['model_architecture'].get('dropout', 0.0)
 
-DEFAULT_WEIGHTS_PATH = os.path.join(BASE_DIR, config['paths']['weights_path'])
-DEFAULT_GCG_EXECUTABLE = config['paths'].get('gcg_executable', "/home/max/gcg/build/gcg-linux-release/bin/gcg")
+data_dir = Path(config['general_settings']['data_dir']).resolve()
+DEFAULT_WEIGHTS_PATH = data_dir / "weights" / config['general_settings'].get('weights_filename', 'gaptest.pth')
+DEFAULT_GCG_EXECUTABLE = Path(config['general_settings'].get('gcg_executable', "/home/max/gcg/build/gcg-linux-release/bin/gcg")).resolve()
 
 
 # ========================== STEP 1: Feature Extraction ==========================
@@ -193,7 +194,7 @@ def run_gcg_with_duals(
 def _extract_wrapper(args_tuple):
     """Worker for ProcessPoolExecutor — extracts features for one instance."""
     lp_path, dec_path = args_tuple
-    maxrounds = config['scip_settings'].get('feature_extraction_presolving_maxrounds', 0)
+    maxrounds = config['feature_extraction'].get('presolving_maxrounds', 0)
     return extract_features_single(str(lp_path), str(dec_path), maxrounds=maxrounds, quiet=True, extract_lp_bound=False)
 
 
@@ -210,111 +211,63 @@ def _gcg_wrapper(args_tuple):
 
 # ========================== Main ==========================
 
-def resolve_instance_list(
-    lp_dir: Path,
-    instance_ratio: float,
-    required_instances: list[str],
-    random_seed: int,
-    required_prefix: str = None
-) -> list[Path]:
-    """
-    Returns a sorted list of .lp file paths from `lp_dir`.
-    It guarantees all filenames in `required_instances` and those starting with `required_prefix` are included,
-    and then randomly samples the remaining files to meet `instance_ratio`.
-    """
-    all_lp_files = sorted(lp_dir.glob("*.lp"))
-    if not all_lp_files:
-        return []
-
-    req_paths = []
-    for req in required_instances:
-        req_path = lp_dir / req
-        if req_path.exists():
-            req_paths.append(req_path)
-        else:
-            print(f"Warning: required instance '{req}' not found in {lp_dir}")
-            
-    if required_prefix:
-        for f in all_lp_files:
-            if f.name.startswith(required_prefix) and f not in req_paths:
-                req_paths.append(f)
-
-    remaining_files = [f for f in all_lp_files if f not in req_paths]
-    
-    total_target_count = max(1, int(len(all_lp_files) * instance_ratio))
-    needed_count = max(0, total_target_count - len(req_paths))
-    
-    sampled_files = []
-    if needed_count > 0 and remaining_files:
-        import random
-        random.seed(random_seed)
-        sampled_files = random.sample(remaining_files, min(needed_count, len(remaining_files)))
-
-    final_list = sorted(list(set(req_paths + sampled_files)))
-    return final_list
+# (resolve_instance_list has been removed as it was unused and deprecated)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="End-to-end pipeline: extract features → predict duals → run GCG (batch mode)"
     )
-    parser.add_argument("--lp-dir", type=Path,
-                        default=config['pipeline_settings'].get('lp_dir'),
-                        help="Directory containing .lp files")
-    parser.add_argument("--eval-set", type=str,
-                        default=config['pipeline_settings'].get('eval_set', 'val'),
-                        help="Subdirectory of lp_dir to evaluate (e.g. val, test)")
-    parser.add_argument("--dec-dir", type=Path,
-                        default=config['pipeline_settings'].get('dec_dir'),
-                        help="Directory containing .dec files")
-    parser.add_argument("--instance-ratio", type=float,
-                        default=config['pipeline_settings'].get('instance_ratio', 1.0),
-                        help="Ratio (0.0–1.0) of instances to process from lp_dir")
-    parser.add_argument("--required-instances", nargs='*',
-                        default=config['pipeline_settings'].get('required_instances', []),
-                        help="Filenames that must always be included (e.g. e10100-1.lp)")
-    parser.add_argument("--required-prefix", type=str,
-                        default=config['pipeline_settings'].get('required_prefix', None),
-                        help="Prefix for filenames that must always be included")
+    parser.add_argument("--data-dir", type=Path,
+                        default=data_dir,
+                        help="Absolute path to the data directory")
+    parser.add_argument("--lpfile-subdir", type=str,
+                        default=config['prediction_parameters'].get('lpfile_subdir', 'test'),
+                        help="Subdirectory of lpfiles to evaluate (e.g. val, test)")
+    parser.add_argument("--dualvalue-type", type=str,
+                        default=config['prediction_parameters'].get('dualvalue_type', 'predicted'),
+                        help="Type of dual values to use (e.g., predicted, optimal, random)")
     parser.add_argument("--skip-prediction", action="store_true",
-                        default=config['pipeline_settings'].get('skip_prediction', False),
-                        help="Skip prediction step and use saved duals")
-    parser.add_argument("--duals-dir-read", type=Path,
-                        default=config['pipeline_settings'].get('duals_dir_read'),
-                        help="Directory to read saved duals from if skip-prediction is enabled")
+                        default=config['prediction_parameters'].get('skip_prediction', False),
+                        help="Skip prediction step and use saved duals (only applies if dualvalue-type is 'predicted')")
     parser.add_argument("--weights", type=Path, default=Path(DEFAULT_WEIGHTS_PATH),
                         help="Path to trained model weights (.pth)")
     parser.add_argument("--gcg", type=Path, default=Path(DEFAULT_GCG_EXECUTABLE),
                         help="Path to the GCG executable")
-    parser.add_argument("--timeout", type=int, default=config['pipeline_settings'].get('timeout', 3600),
-                        help=f"Max solving time in seconds (default: {config['pipeline_settings'].get('timeout', 3600)})")
+    parser.add_argument("--timeout", type=int, default=config['prediction_parameters'].get('timeout', 3600),
+                        help=f"Max solving time in seconds (default: {config['prediction_parameters'].get('timeout', 3600)})")
     parser.add_argument("--output-dir", type=Path, default=None,
-                        help="Directory for predicted duals and logs (default: project dirs)")
+                        help="Directory for logs and experiment outputs")
     parser.add_argument("--no-logs", action="store_true",
                         help="Do not save GCG log output")
     parser.add_argument("--quiet", action="store_true",
                         help="Do not print GCG solver output to console")
     parser.add_argument("--seed", type=int,
-                        default=config['pipeline_settings'].get('random_seed', 42),
+                        default=config['general_settings'].get('random_seed', 42),
                         help="Random seed for instance sampling")
     parser.add_argument("--num-cores", type=int,
-                        default=config['pipeline_settings'].get('num_cores', 1),
+                        default=config['general_settings'].get('num_cores', 1),
                         help="CPU cores for parallel feature extraction and GCG solving")
     parser.add_argument("--gpu-batch-size", type=int,
-                        default=config['pipeline_settings'].get('gpu_batch_size', 16),
+                        default=config['general_settings'].get('gpu_batch_size', 16),
                         help="Number of instances to predict duals for in one GPU batch")
     args = parser.parse_args()
-
-    if args.lp_dir is None:
-        sys.exit("Error: lp_dir not provided in arguments or config.yaml")
-    if args.dec_dir is None:
-        sys.exit("Error: dec_dir not provided in arguments or config.yaml")
-
-    lp_dir = Path(args.lp_dir).resolve()
-    if args.eval_set:
-        lp_dir = lp_dir / args.eval_set
+    
+    data_dir_path = args.data_dir
+    lp_dir = data_dir_path / "lpfiles"
+    if args.lpfile_subdir:
+        lp_dir = lp_dir / args.lpfile_subdir
         
-    dec_dir = Path(args.dec_dir).resolve()
+    dec_dir = data_dir_path / "decfiles"
+    
+    dual_dir = data_dir_path / "dualvalues" / args.dualvalue_type
+    dual_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_dir = (args.output_dir or data_dir_path) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    exp_dir = (args.output_dir or data_dir_path) / "experiments"
+    exp_dir.mkdir(parents=True, exist_ok=True)
 
     if not lp_dir.is_dir():
         sys.exit(f"Error: LP directory not found: {lp_dir}")
@@ -347,21 +300,12 @@ def main():
     print(f"  Full Pipeline — Batch Mode")
     print(f"  LP dir:    {lp_dir}")
     print(f"  DEC dir:   {dec_dir}")
-    print(f"  Instances: {n_instances} selected from {args.eval_set} set")
+    print(f"  Instances: {n_instances} selected from {args.lpfile_subdir} set")
     if is_batch:
         print(f"  Cores:     {num_cores}  |  GPU batch size: {args.gpu_batch_size}")
     print("=" * 70)
 
-    # Output dirs
-    duals_dir_cfg = config['pipeline_settings'].get('duals_dir')
-    dual_dir = Path(duals_dir_cfg).resolve() if duals_dir_cfg else (args.output_dir or lp_dir)
-    dual_dir.mkdir(parents=True, exist_ok=True)
-
-    log_dir_cfg = config['pipeline_settings'].get('log_dir')
-    log_dir = Path(log_dir_cfg).resolve() if log_dir_cfg else (args.output_dir or lp_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    experiment_params = config.get('gcg_settings', {})
+    experiment_params = config.get('prediction_parameters', {}).get('gcg_settings', {})
     pipeline_start = time.time()
 
     # ====================================================================
@@ -378,28 +322,25 @@ def main():
         use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
         dual_file = dual_dir / f"{instance_name}.txt"
 
-        if use_custom_duals and args.skip_prediction:
-            if args.duals_dir_read:
-                read_dir = Path(args.duals_dir_read).resolve()
-                d_file = read_dir / f"{instance_name}.txt"
-                if d_file.exists():
-                    dual_file = d_file
+        if use_custom_duals:
+            if args.dualvalue_type != "predicted" or args.skip_prediction:
+                if dual_file.exists():
                     if not args.quiet:
-                        print(f"  Skipped prediction, using saved duals from: {dual_file}")
+                        if args.dualvalue_type != "predicted":
+                            print(f"  Using precalculated {args.dualvalue_type} duals from: {dual_file}")
+                        else:
+                            print(f"  Skipped prediction, using saved predicted duals from: {dual_file}")
                 else:
-                    print(f"  [!] Saved duals not found at {d_file}. Creating empty file.")
+                    print(f"  [!] Saved duals not found at {dual_file}. Creating empty file.")
                     dual_file.touch()
             else:
-                print("  [!] skip_prediction is true but duals_dir_read is not set. Creating empty file.")
-                dual_file.touch()
-        elif use_custom_duals:
-            feature_dict = extract_features_single(
-                str(lp_file), 
-                str(dec_file), 
-                maxrounds=config['scip_settings'].get('feature_extraction_presolving_maxrounds', 0),
-                quiet=args.quiet,
-                extract_lp_bound=False
-            )
+                feature_dict = extract_features_single(
+                    str(lp_file), 
+                    str(dec_file), 
+                    maxrounds=config['feature_extraction'].get('presolving_maxrounds', 0),
+                    quiet=args.quiet,
+                    extract_lp_bound=False
+                )
             mult_dict, dual_txt = predict_duals(feature_dict, str(args.weights), quiet=args.quiet)
             with open(dual_file, 'w') as f:
                 f.write(dual_txt)
@@ -448,7 +389,8 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Load model once
-        if use_custom_duals and not args.skip_prediction:
+        is_prediction_needed = use_custom_duals and args.dualvalue_type == "predicted" and not args.skip_prediction
+        if is_prediction_needed:
             model = LagrangianMultiplierModel(
                 feature_embedding_size=FEATURE_EMBEDDING_SIZE,
                 encoder_mlp_dims=ENCODER_MLP_DIMS,
@@ -463,7 +405,7 @@ def main():
         all_results = []
         batch_size = args.gpu_batch_size
 
-        if device.type == 'cpu' or args.skip_prediction or not use_custom_duals:
+        if device.type == 'cpu' or not is_prediction_needed:
             batch_size = len(instance_pairs)
 
         for batch_start in range(0, len(instance_pairs), batch_size):
@@ -479,20 +421,15 @@ def main():
 
             dual_files: dict[str, Path] = {}
 
-            if use_custom_duals and args.skip_prediction:
-                print(f"  Phase 1 & 2: Skipped (skip_prediction is True), using saved duals ...")
-                read_dir = Path(args.duals_dir_read).resolve() if args.duals_dir_read else None
+            if use_custom_duals and not is_prediction_needed:
+                print(f"  Phase 1 & 2: Skipped (using precalculated {args.dualvalue_type} duals or skip_prediction is True) ...")
                 for lp_file, _ in chunk_pairs:
                     name = lp_file.stem
-                    if read_dir:
-                        d_file = read_dir / f"{name}.txt"
-                        if not d_file.exists():
-                            print(f"    [!] Saved duals not found at {d_file}")
-                        dual_files[name] = d_file
-                    else:
-                        d_file = dual_dir / f"{name}.txt"
+                    d_file = dual_dir / f"{name}.txt"
+                    if not d_file.exists():
+                        print(f"    [!] Saved duals not found at {d_file}")
                         d_file.touch()
-                        dual_files[name] = d_file
+                    dual_files[name] = d_file
             elif use_custom_duals:
                 # ---- Phase 1: Parallel feature extraction ----
                 print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
@@ -643,21 +580,16 @@ def main():
         print(f"  Total wall-clock time:         {pipeline_elapsed:8.2f}s")
         print("=" * 70)
 
-    # Save to JSON
-    exp_dir_cfg = config['pipeline_settings'].get('experiments_dir')
-    if exp_dir_cfg:
-        exp_dir = Path(exp_dir_cfg).resolve()
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        exp_json_name = config['pipeline_settings'].get('experiment_json_name', 'run_results.json')
-        exp_json_path = exp_dir / exp_json_name
-        
-        output_data = {
-            "total_wall_clock_time": pipeline_elapsed,
-            "instances": all_results
-        }
-        with open(exp_json_path, 'w') as f:
-            json.dump(output_data, f, indent=4)
-        print(f"\nSaved experiment results to {exp_json_path}")
+    exp_json_name = config['prediction_parameters'].get('experiment_json_name', 'run_results.json')
+    exp_json_path = exp_dir / exp_json_name
+    
+    output_data = {
+        "total_wall_clock_time": pipeline_elapsed,
+        "instances": all_results
+    }
+    with open(exp_json_path, 'w') as f:
+        json.dump(output_data, f, indent=4)
+    print(f"\nSaved experiment results to {exp_json_path}")
 
 
 if __name__ == '__main__':

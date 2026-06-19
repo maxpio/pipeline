@@ -14,28 +14,19 @@ with open(CONFIG_PATH, "r") as f:
     config_full = yaml.safe_load(f)
 
 config = config_full.get("duals_generation_settings", {})
-paths_config = config_full.get("paths", {})
 
-# Path to the actual project root containing the data directory
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
-lp_dir_cfg = config.get("lp_dir") or paths_config.get("lp_dir", "data/GA/lpfiles")
-if os.path.isabs(lp_dir_cfg):
-    LP_DIR = lp_dir_cfg
-else:
-    LP_DIR = os.path.join(PROJECT_ROOT, lp_dir_cfg)
-GA_DIR = os.path.dirname(LP_DIR)
+DATA_DIR = config_full.get("general_settings", {}).get("data_dir")
+if not DATA_DIR:
+    raise ValueError("general_settings -> data_dir not found in config.yaml")
 
-DUAL_VALUES_DIR = os.path.join(GA_DIR, "optdualvalues")
-RANDOM_DUAL_VALUES_DIR = os.path.join(GA_DIR, "randomDualvalues")
+LP_DIR = os.path.join(DATA_DIR, "lpfiles")
+DUAL_BASE_DIR = os.path.join(DATA_DIR, "dualvalues")
 
-results_file_cfg = config.get("results_file")
-if results_file_cfg:
-    if os.path.isabs(results_file_cfg):
-        RESULTS_JSON_FILE = results_file_cfg
-    else:
-        RESULTS_JSON_FILE = os.path.join(PROJECT_ROOT, results_file_cfg)
-else:
-    RESULTS_JSON_FILE = os.path.join(GA_DIR, "results.json")
+DUAL_VALUES_DIR = os.path.join(DUAL_BASE_DIR, "optimal")
+RANDOM_DUAL_VALUES_DIR = os.path.join(DUAL_BASE_DIR, "random")
+
+BOUNDS_DIR = os.path.join(DATA_DIR, "bounds")
+RESULTS_JSON_FILE = os.path.join(BOUNDS_DIR, "lagrangian_bounds.json")
 
 # Generation Options
 PROCESS_SPLITS = config.get("process_splits", False)
@@ -44,7 +35,7 @@ GENERATE_SUBOPT = config.get("generate_subopt", True)
 SUBOPT_PERCENT = config.get("subopt_percent", 0.995)
 
 _subopt_str = str(SUBOPT_PERCENT).split('.')[-1] if '.' in str(SUBOPT_PERCENT) else str(SUBOPT_PERCENT)
-SUBOPT_DUAL_VALUES_DIR = os.path.join(GA_DIR, f"suboptDualvalues{_subopt_str}")
+SUBOPT_DUAL_VALUES_DIR = os.path.join(DUAL_BASE_DIR, f"suboptDualvalues{_subopt_str}")
 
 GENERATE_RANDOM = config.get("generate_random", True)
 RANDOM_GAUSS_MU = config.get("random_gauss_mu", 0.0)
@@ -52,7 +43,7 @@ RANDOM_GAUSS_SIGMA = config.get("random_gauss_sigma", 5.0)
 
 # Execution Options
 MULTICORE_SOLVING = config.get("multicore_solving", False)
-MAX_WORKERS = config.get("max_workers", 1)
+MAX_WORKERS = config_full.get("general_settings", {}).get("num_cores", 1)
 SHORT_LOG_OUTPUT = config.get("short_log_output", False)
 
 # Subgradient Algorithm Parameters

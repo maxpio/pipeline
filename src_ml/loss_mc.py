@@ -14,9 +14,9 @@ with open(CONFIG_PATH, 'r') as f:
     config = yaml.safe_load(f)
 
 # --- SCIP Settings ---
-DISABLE_PRESOLVE = config['scip_settings']['disable_presolve']
-DISABLE_HEURISTICS = config['scip_settings']['disable_heuristics']
-MIP_GAP = config['scip_settings'].get('mip_gap', 0.0)
+DISABLE_PRESOLVE = config['training_parameters']['scip_settings']['disable_presolve']
+DISABLE_HEURISTICS = config['training_parameters']['scip_settings']['disable_heuristics']
+MIP_GAP = config['training_parameters']['scip_settings'].get('mip_gap', 0.0)
 
 # ==========================================
 # WORKER INITIALIZATION & SOLVE FUNCTION

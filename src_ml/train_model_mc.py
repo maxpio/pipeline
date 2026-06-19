@@ -35,19 +35,21 @@ with open(CONFIG_PATH, 'r') as f:
     config = yaml.safe_load(f)
 
 # ==========================================
-# TRAINING PATHS  (all absolute, from config)
+# TRAINING PATHS  (generated relative to data_dir)
 # ==========================================
-_tp = config['training_paths']
+DATA_DIR       = config['general_settings']['data_dir']
 
-LP_DIR         = _tp['lp_dir']         # contains training/, val/, test/ subdirs
-DEC_DIR        = _tp['dec_dir']         # .dec files (same stem as .lp)
-FEATURE_DIR    = _tp['feature_dir']     # .json ML input files land here
-LABELS_PATH    = _tp['labels_path']
-LP_BOUNDS_PATH = _tp.get('lp_bounds_path', '')
-WEIGHTS_PATH   = _tp['weights_path']
-RESULTS_PATH   = _tp['results_path']
-PLOT_PATH      = _tp['plot_path']
-BOXPLOT_PATH   = _tp.get('boxplot_path', '')
+LP_DIR         = os.path.join(DATA_DIR, "lpfiles")         # contains training/, val/, test/ subdirs
+DEC_DIR        = os.path.join(DATA_DIR, "decfiles")         # .dec files (same stem as .lp)
+FEATURE_DIR    = os.path.join(DATA_DIR, "featureinf")     # .json ML input files land here
+BOUNDS_DIR     = os.path.join(DATA_DIR, "bounds")
+LABELS_PATH    = os.path.join(BOUNDS_DIR, "lagrangian_bounds.json")
+LP_BOUNDS_PATH = os.path.join(BOUNDS_DIR, "lp_bounds.json")
+WEIGHTS_PATH   = os.path.join(DATA_DIR, "weights", config['general_settings'].get('weights_filename', 'gaptest.pth'))
+RESULTS_PATH   = os.path.join(DATA_DIR, "results.json")
+PLOT_PATH      = os.path.join(DATA_DIR, "training_plots", "training_loss_plot.png")
+BOXPLOT_PATH   = os.path.join(DATA_DIR, "training_plots", "best_model_boxplots.png")
+
 
 TRAIN_LP_DIR   = os.path.join(LP_DIR, "training")
 VAL_LP_DIR     = os.path.join(LP_DIR, "val")
@@ -70,7 +72,7 @@ LEARNING_RATE                      = float(config['training_parameters']['learni
 EPOCHS                             = config['training_parameters']['epochs']
 USE_RANDOM_SUBSET                  = config['training_parameters'].get('use_random_subset', False)
 RANDOM_SUBSET_RATIO                = float(config['training_parameters'].get('random_subset_ratio', 1.0))
-RANDOM_SEED                        = config['training_parameters']['random_seed']
+RANDOM_SEED                        = config['general_settings']['random_seed']
 PLOT_EVERY_N_EPOCHS                = config['training_parameters']['plot_every_n_epochs']
 EVALUATE_VALIDATION_LOSS           = config['training_parameters']['evaluate_validation_loss']
 EVALUATE_VALIDATION_EVERY_N_EPOCHS = config['training_parameters'].get('evaluate_validation_every_n_epochs', 1)
@@ -85,18 +87,18 @@ IS_MINIMIZATION                    = config['training_parameters'].get('is_minim
 # ==========================================
 # PARALLELIZATION & BATCHING
 # ==========================================
-NUM_CORES  = config['parallelization_batching']['num_cores']
-BATCH_SIZE = config['parallelization_batching']['batch_size']
+NUM_CORES  = config['general_settings']['num_cores']
+BATCH_SIZE = config['general_settings']['gpu_batch_size']
 
 # ==========================================
 # CACHING SETTINGS
 # ==========================================
-CACHE_GRAPH              = config['caching_settings']['cache_graph']
-CACHE_LAG_RELAX          = config['caching_settings'].get('cache_lag_relax', False)
-RESHUFFLE_EVERY_N_EPOCHS = config['caching_settings'].get('reshuffle_allocation_every_n_epochs', 0)
-WARMUP_EPOCHS            = config['caching_settings'].get('warmup_epochs_without_cache', 0)
-SMA_ALPHA                = config['caching_settings'].get('solve_time_sma_alpha', 0.5)
-TRACK_AFTER_WARMUP       = config['caching_settings'].get('track_solve_times_after_warmup', False)
+CACHE_GRAPH              = config['training_parameters']['caching_settings']['cache_graph']
+CACHE_LAG_RELAX          = config['training_parameters']['caching_settings'].get('cache_lag_relax', False)
+RESHUFFLE_EVERY_N_EPOCHS = config['training_parameters']['caching_settings'].get('reshuffle_allocation_every_n_epochs', 0)
+WARMUP_EPOCHS            = config['training_parameters']['caching_settings'].get('warmup_epochs_without_cache', 0)
+SMA_ALPHA                = config['training_parameters']['caching_settings'].get('solve_time_sma_alpha', 0.5)
+TRACK_AFTER_WARMUP       = config['training_parameters']['caching_settings'].get('track_solve_times_after_warmup', False)
 
 # ==========================================
 # FEATURE JSON GENERATION
@@ -105,7 +107,7 @@ TRACK_AFTER_WARMUP       = config['caching_settings'].get('track_solve_times_aft
 def _gen_json_worker(args):
     """Worker: extract features for one (lp_path, dec_path) and write to out_json."""
     lp_path, dec_path, out_json = args
-    maxrounds = config['scip_settings'].get('feature_extraction_presolving_maxrounds', 0)
+    maxrounds = config['feature_extraction'].get('presolving_maxrounds', 0)
     feature_dict, lp_obj_val = extract_features_single(lp_path, dec_path, maxrounds=maxrounds, quiet=True, extract_lp_bound=True)
     import json as _json
     with open(out_json, 'w') as fh:
@@ -315,7 +317,7 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
         batch_sizes.append(len(dualized_cons_names))
         worker_args_list.append((file_name, lp_path, dualized_cons_names))
 
-    current_mip_gap = config['scip_settings'].get('mip_gap', 0.0) if is_training else 0.0
+    current_mip_gap = config['training_parameters']['scip_settings'].get('mip_gap', 0.0) if is_training else 0.0
 
     # 4. Solver execution via Custom Batched Autograd
     loss, bounds, solve_times = BatchedSubgradientLoss.apply(
@@ -331,6 +333,15 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
 # ==========================================
 
 def train():
+    # Ensure plots directories exist
+    os.makedirs(os.path.dirname(PLOT_PATH), exist_ok=True)
+    if BOXPLOT_PATH:
+        os.makedirs(os.path.dirname(BOXPLOT_PATH), exist_ok=True)
+
+    # --- Ensure all feature .json files exist; generate missing ones ---
+    train_files, val_files = get_train_val_files()
+
+
     # Load labels for Gap Closed calculation
     labels_dict = {}
     if os.path.exists(LABELS_PATH):
@@ -346,8 +357,6 @@ def train():
     else:
         print(f"Warning: LP bounds file not found at {LP_BOUNDS_PATH}. Gap Closed metric will not be computed for instances missing it.\n")
 
-    # --- Ensure all feature .json files exist; generate missing ones ---
-    train_files, val_files = get_train_val_files()
 
     print(f"\n--- Dataset Loaded ---")
     print(f"Training instances:   {len(train_files)}")

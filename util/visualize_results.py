@@ -10,7 +10,10 @@ def load_config():
 
 def main():
     config = load_config()
-    exp_dir = Path(config['pipeline_settings'].get('experiments_dir', '.'))
+    data_dir = Path(config.get('general_settings', {}).get('data_dir', '.'))
+    exp_dir = data_dir / "experiments"
+    vis_dir = data_dir / "visualizations"
+    vis_dir.mkdir(parents=True, exist_ok=True)
     files = config.get('visualization_settings', {}).get('experiment_files', [])
     
     if not files:
@@ -54,9 +57,9 @@ def main():
     plt.title("Total Pipeline Execution Time Comparison")
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(exp_dir / "total_wall_clock_time.png")
+    plt.savefig(vis_dir / "total_wall_clock_time.png")
     plt.close()
-    print(f"Saved {exp_dir / 'total_wall_clock_time.png'}")
+    print(f"Saved {vis_dir / 'total_wall_clock_time.png'}")
 
     # Metrics to plot: (JSON key, Display Name)
     metrics_to_plot = [
@@ -113,9 +116,9 @@ def main():
         plt.title(f"{metric_name} - Absolute Values")
         plt.xticks(rotation=45, ha='center')
         plt.tight_layout()
-        plt.savefig(exp_dir / f"{safe_name}_absolute.png")
+        plt.savefig(vis_dir / f"{safe_name}_absolute.png")
         plt.close()
-        print(f"Saved {exp_dir / f'{safe_name}_absolute.png'}")
+        print(f"Saved {vis_dir / f'{safe_name}_absolute.png'}")
         
         # Normalized Boxplot (divided by the worst/max value per instance)
         norm_data = [[] for _ in run_names]
@@ -144,9 +147,9 @@ def main():
         plt.title(f"{metric_name} - Normalized")
         plt.xticks(rotation=45, ha='center')
         plt.tight_layout()
-        plt.savefig(exp_dir / f"{safe_name}_normalized.png")
+        plt.savefig(vis_dir / f"{safe_name}_normalized.png")
         plt.close()
-        print(f"Saved {exp_dir / f'{safe_name}_normalized.png'}")
+        print(f"Saved {vis_dir / f'{safe_name}_normalized.png'}")
 
 if __name__ == "__main__":
     main()

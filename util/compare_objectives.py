@@ -8,7 +8,8 @@ def load_config():
 
 def main():
     config = load_config()
-    exp_dir = Path(config['pipeline_settings'].get('experiments_dir', '.'))
+    data_dir = Path(config.get('general_settings', {}).get('data_dir', '.'))
+    exp_dir = data_dir / "experiments"
     files = config.get('visualization_settings', {}).get('experiment_files', [])
     
     if not files:
