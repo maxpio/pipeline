@@ -357,7 +357,8 @@ def main():
         print(f"  Instance:        {instance_name}")
         print(f"  Status:          {status}")
         print(f"  Execution Time:  {metrics['solving_time']:.2f}s")
-        print(f"  Objective Value: {metrics['final_obj_val']}")
+        print(f"  Dual Bound:      {metrics['final_dual_bound']}")
+        print(f"  Primal Bound:    {metrics['final_primal_bound']}")
         print(f"\n  Total wall-clock time: {pipeline_elapsed:.2f}s")
         print("=" * 70)
 
@@ -532,11 +533,11 @@ def main():
                             **metrics
                         })
                         print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  "
-                              f"status={status:10s}  time={metrics['solving_time']:8.2f}s  obj={metrics['final_obj_val']}")
+                              f"status={status:10s}  time={metrics['solving_time']:8.2f}s  dual={metrics['final_dual_bound']}  primal={metrics['final_primal_bound']}")
                     except Exception as exc:
                         all_results.append({
                             "instance": name, "status": "CRASH",
-                            "solving_time": 0.0, "final_obj_val": float('inf'),
+                            "solving_time": 0.0, "final_dual_bound": float('inf'), "final_primal_bound": float('inf'),
                             "cols_needed_for_rmp_feasibility": 0,
                             "slp_iterations_main_loop": 0,
                             "slp_iterations_custom_pricing": 0,
@@ -557,7 +558,7 @@ def main():
         print("=" * 70)
         for r in all_results:
             print(f"  {r['instance']:30s}  status={r['status']:10s}  "
-                  f"time={r.get('solving_time', 0.0):8.2f}s  obj={r.get('final_obj_val', 'inf')}")
+                  f"time={r.get('solving_time', 0.0):8.2f}s  dual={r.get('final_dual_bound', 'inf')}  primal={r.get('final_primal_bound', 'inf')}")
         print(f"\n  Total instances processed: {len(all_results)}")
         print(f"  Total wall-clock time:         {pipeline_elapsed:8.2f}s")
         print("=" * 70)

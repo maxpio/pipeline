@@ -7,18 +7,17 @@ import tempfile
 import os
 from pathlib import Path
 
-def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_executable: Path, cmd_string: str, timeout: int, log_file: Path, save_logs: bool = True, print_solver_output: bool = False) -> tuple[str, float, float]:
+def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_executable: Path, cmd_string: str, timeout: int, log_file: Path, save_logs: bool = True, print_solver_output: bool = False) -> tuple[str, dict]:
     """
     Runs a single GCG instance using a provided SCIP command string.
     
-    Returns:
-        (str, dict): A tuple containing the status ("SUCCESS", "TIMEOUT", "MISSING_FILES", "CRASH")
-                     and a metrics dictionary with solving_time, final_obj_val, and other metrics.
+    Returns a tuple of (status, metrics) where status is a string (e.g., "SUCCESS") 
+    and a metrics dictionary with solving_time, final_dual_bound, final_primal_bound, and other metrics.
     """
     # Ensure all required files exist before running
     if not lp_file.exists():
         print(f"Error: Missing LP file at {lp_file}")
-        return "MISSING_FILES", 0.0, float('inf'), 0
+        return "MISSING_FILES", {"final_dual_bound": float('inf'), "solving_time": 0.0}
     if not dec_file.exists():
         print(f"Error: Missing DEC file at {dec_file}")
         return "MISSING_FILES", 0.0, float('inf'), 0
@@ -101,11 +100,17 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 
                 solving_time = float(gcg_metrics.get("solving_time", real_runtime))
                 
-                final_obj_val = gcg_metrics.get("final_obj_val")
-                if final_obj_val is None:
-                    final_obj_val = float('inf')
+                final_dual_bound = gcg_metrics.get("final_dual_bound")
+                if final_dual_bound is None:
+                    final_dual_bound = float('inf')
                 else:
-                    final_obj_val = float(final_obj_val)
+                    final_dual_bound = float(final_dual_bound)
+                    
+                final_primal_bound = gcg_metrics.get("final_primal_bound")
+                if final_primal_bound is None:
+                    final_primal_bound = float('inf')
+                else:
+                    final_primal_bound = float(final_primal_bound)
                     
                 cols_needed = int(gcg_metrics.get("cols_needed_for_rmp_feasibility", 0))
                 slp_iters_main = int(gcg_metrics.get("slp_iterations_main_loop", 0))
@@ -114,7 +119,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             except (FileNotFoundError, json.JSONDecodeError, ValueError):
                 # File missing (GCG crashed before writing) or malformed
                 solving_time = real_runtime
-                final_obj_val = float('inf')
+                final_dual_bound = float('inf')
+                final_primal_bound = float('inf')
                 cols_needed = 0
                 slp_iters_main = 0
                 slp_iters_custom = 0
@@ -122,7 +128,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             status = "SUCCESS" if process.returncode == 0 else "CRASH"
 
             metrics = {
-                "final_obj_val": final_obj_val,
+                "final_dual_bound": final_dual_bound,
+                "final_primal_bound": final_primal_bound,
                 "solving_time": solving_time,
                 "cols_needed_for_rmp_feasibility": cols_needed,
                 "slp_iterations_main_loop": slp_iters_main,

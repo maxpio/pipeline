@@ -16,7 +16,7 @@ def main():
         print("No experiment files defined in config.yaml under visualization_settings.experiment_files")
         return
 
-    # run_name -> {inst_name: final_obj_val}
+    # run_name -> {inst_name: final_dual_bound}
     data_by_run = {}
     
     for fname in files:
@@ -30,7 +30,7 @@ def main():
         run_name = fname.replace(".json", "")
         # Parse instances into a dict keyed by instance name
         inst_dict = {
-            inst["instance"]: inst.get("final_obj_val")
+            inst["instance"]: inst.get("final_dual_bound")
             for inst in d.get("instances", []) 
             if inst.get("status") == "SUCCESS"
         }
