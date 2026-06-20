@@ -94,21 +94,30 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             if print_solver_output:
                 print(f"\n--- SCIP OUTPUT END ({lp_file.name}) ---\n")
 
-            # --- solving_time: read from GCG-written JSON, fallback to real_runtime ---
-            solving_time = real_runtime
+            # Fetch the metrics from JSON
             try:
                 with open(metrics_path, "r") as mf:
                     gcg_metrics = json.load(mf)
-                solving_time = float(gcg_metrics["solving_time"])
-            except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
-                # File missing (GCG crashed before writing) or malformed — use wall-clock time
-                pass
+                
+                solving_time = float(gcg_metrics.get("solving_time", real_runtime))
+                
+                final_obj_val = gcg_metrics.get("final_obj_val")
+                if final_obj_val is None:
+                    final_obj_val = float('inf')
+                else:
+                    final_obj_val = float(final_obj_val)
+                    
+                cols_needed = int(gcg_metrics.get("cols_needed_for_rmp_feasibility", 0))
+                slp_iters_main = int(gcg_metrics.get("slp_iterations_main_loop", 0))
+                slp_iters_custom = int(gcg_metrics.get("slp_iterations_custom_pricing", 0))
 
-            # Dummy returns for all regex-based extractions while they are being migrated to JSON
-            final_obj_val = float('inf')
-            cols_needed = 0
-            slp_iters_main = 0
-            slp_iters_custom = 0
+            except (FileNotFoundError, json.JSONDecodeError, ValueError):
+                # File missing (GCG crashed before writing) or malformed
+                solving_time = real_runtime
+                final_obj_val = float('inf')
+                cols_needed = 0
+                slp_iters_main = 0
+                slp_iters_custom = 0
 
             status = "SUCCESS" if process.returncode == 0 else "CRASH"
 
@@ -128,7 +137,4 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
 
     finally:
         # Always clean up the temporary metrics file
-        try:
-            os.remove(metrics_path)
-        except FileNotFoundError:
-            pass
+        Path(metrics_path).unlink(missing_ok=True)
