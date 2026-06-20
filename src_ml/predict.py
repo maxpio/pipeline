@@ -270,6 +270,10 @@ def main():
 
     # Resolve which instances to run
     instance_files = sorted(list(lp_dir.glob("*.lp")))
+    only_with_prefix = config.get('prediction_parameters', {}).get('only_with_prefix', "")
+    if only_with_prefix:
+        instance_files = [f for f in instance_files if f.name.startswith(only_with_prefix)]
+
     if not instance_files:
         sys.exit(f"Error: No .lp files found in {lp_dir}")
 

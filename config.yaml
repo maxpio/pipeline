@@ -79,25 +79,25 @@ prediction_parameters:
   experiment_json_name: "raw.json"
   skip_prediction: True
   required_instances: []  # List of filenames (e.g. ["e10100-1.lp"]) always included, even if ratio is 0
-  required_prefix: "gapdcstm_40_400_5"  # Instances with this prefix are always included
+  only_with_prefix: "gapdcstm_40_400_50"  # Only instances with this prefix are processed. If empty, all are processed.
   
   gcg_settings:
-    use_custom_duals: False
+    use_custom_duals: True
     disable_heuristics: True
     disable_presolving: True
     disable_separating_cliques: True
     disable_subprob_presolve_heur: "False"
     masterpricer_stabilization: "False"
     solve_root_only: True
-    use_smoothing: "False"
+    use_smoothing: "True"
     smoothing_weight_start: 0.99
     smoothing_weight_factor: 0.4
     smoothing_weight_min: 0.01
     smoothing_improvement_threshold: 200.0
-    n_perturbation_rounds: 0
+    n_perturbation_rounds: 1
     perturbation_percent: 0.007
-    add_round_0_columns: "False"
-    large_log: "True"
+    add_round_0_columns: "True"
+    large_log: "False"
     use_bigm_artificials: "False"
     bigm_value: 1000000.0
 

@@ -37,7 +37,7 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
     try:
         # Prepend the metrics_file setting so GCG knows where to write the JSON.
         full_cmd_string = (
-            f'set pricingcb initduals metrics_file "{metrics_path}"\n'
+            f'set pricingcb initduals metrics_file {metrics_path}\n'
             + cmd_string
         )
 
@@ -88,12 +88,12 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             if timeout_expired:
                 if print_solver_output:
                     print(f"\n--- SCIP OUTPUT TIMED OUT ({lp_file.name}) ---\n")
-                return "TIMEOUT", float(timeout), float('inf'), 0
+                return "TIMEOUT", {"final_dual_bound": float('inf'), "solving_time": float(timeout)}
                 
             if print_solver_output:
                 print(f"\n--- SCIP OUTPUT END ({lp_file.name}) ---\n")
 
-            # Fetch the metrics from JSON
+            # Fetch the metrics from JSON written by GCG's InitDuals exitSol callback
             try:
                 with open(metrics_path, "r") as mf:
                     gcg_metrics = json.load(mf)
@@ -116,14 +116,41 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 slp_iters_main = int(gcg_metrics.get("slp_iterations_main_loop", 0))
                 slp_iters_custom = int(gcg_metrics.get("slp_iterations_custom_pricing", 0))
 
-            except (FileNotFoundError, json.JSONDecodeError, ValueError):
-                # File missing (GCG crashed before writing) or malformed
+            except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
+                # Should not happen: GCG writes this file in exitSol before quitting.
+                # If it does, it means GCG crashed hard before exitSol ran.
+                print(f"  [!] Warning: could not read GCG metrics JSON ({e}). Bounds will be reported as inf.")
                 solving_time = real_runtime
                 final_dual_bound = float('inf')
                 final_primal_bound = float('inf')
                 cols_needed = 0
                 slp_iters_main = 0
                 slp_iters_custom = 0
+
+            # Fallback parsing from stdout for bounds only
+            if final_dual_bound == float('inf'):
+                m = re.search(r"Dual Bound\s*:\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?|[+-]?inf(?:inite|inity)?)", full_output, re.IGNORECASE)
+                if m:
+                    try:
+                        val_str = m.group(1).lower()
+                        if 'inf' in val_str:
+                            final_dual_bound = float('inf') if '-' not in val_str else float('-inf')
+                        else:
+                            final_dual_bound = float(val_str)
+                    except ValueError:
+                        pass
+            
+            if final_primal_bound == float('inf'):
+                m = re.search(r"Primal Bound\s*:\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?|[+-]?inf(?:inite|inity)?)", full_output, re.IGNORECASE)
+                if m:
+                    try:
+                        val_str = m.group(1).lower()
+                        if 'inf' in val_str:
+                            final_primal_bound = float('inf') if '-' not in val_str else float('-inf')
+                        else:
+                            final_primal_bound = float(val_str)
+                    except ValueError:
+                        pass
 
             status = "SUCCESS" if process.returncode == 0 else "CRASH"
 
