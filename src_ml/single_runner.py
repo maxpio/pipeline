@@ -1,7 +1,10 @@
 import subprocess
 import time
 import re
+import json
 import threading
+import tempfile
+import os
 from pathlib import Path
 
 def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_executable: Path, cmd_string: str, timeout: int, log_file: Path, save_logs: bool = True, print_solver_output: bool = False) -> tuple[str, float, float]:
@@ -9,9 +12,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
     Runs a single GCG instance using a provided SCIP command string.
     
     Returns:
-        (str, float, float, int): A tuple containing the status ("SUCCESS", "TIMEOUT", "MISSING_FILES", "CRASH"), 
-                             the execution time in seconds,
-                             the best objective value found (Primal Bound), and the total MLP iterations.
+        (str, dict): A tuple containing the status ("SUCCESS", "TIMEOUT", "MISSING_FILES", "CRASH")
+                     and a metrics dictionary with solving_time, final_obj_val, and other metrics.
     """
     # Ensure all required files exist before running
     if not lp_file.exists():
@@ -28,11 +30,20 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
     if save_logs:
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    import tempfile
-    import os
+    # Generate a unique temporary JSON file for GCG to write metrics into.
+    # We close the fd immediately — GCG (C++) will be the one writing to it.
+    metrics_fd, metrics_path = tempfile.mkstemp(suffix=".json", prefix="gcg_metrics_")
+    os.close(metrics_fd)
+
     try:
+        # Prepend the metrics_file setting so GCG knows where to write the JSON.
+        full_cmd_string = (
+            f'set pricingcb initduals metrics_file "{metrics_path}"\n'
+            + cmd_string
+        )
+
         with tempfile.NamedTemporaryFile(suffix=".batch", mode='w', delete=True) as temp_file:
-            temp_file.write(cmd_string)
+            temp_file.write(full_cmd_string)
             temp_file.flush()
             batch_file_path = temp_file.name
 
@@ -83,35 +94,21 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             if print_solver_output:
                 print(f"\n--- SCIP OUTPUT END ({lp_file.name}) ---\n")
 
-            # Parse SCIP's reported solving time, fallback to real execution time if it fails.
-            matches = re.findall(r"Solving Time\s*\(sec\)\s*:\s*([\d\.]+)", full_output)
-            solving_time = float(matches[-1]) if matches else real_runtime
+            # --- solving_time: read from GCG-written JSON, fallback to real_runtime ---
+            solving_time = real_runtime
+            try:
+                with open(metrics_path, "r") as mf:
+                    gcg_metrics = json.load(mf)
+                solving_time = float(gcg_metrics["solving_time"])
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+                # File missing (GCG crashed before writing) or malformed — use wall-clock time
+                pass
 
-            # 1. Dual Bound (final obj val)
-            db_matches = re.findall(r"Dual Bound\s*:\s*([\+\-a-zA-Z0-9\.]+)", full_output)
+            # Dummy returns for all regex-based extractions while they are being migrated to JSON
             final_obj_val = float('inf')
-            if db_matches:
-                val_str = db_matches[-1]
-                if val_str not in ('-', 'infinity'):
-                    try:
-                        final_obj_val = float(val_str)
-                    except ValueError:
-                        pass
-
-            # 2. Columns needed for feasibility of RMP
-            pre_pricing_text = full_output.split("Starting reduced cost pricing...")[0] if "Starting reduced cost pricing..." in full_output else full_output
-            mvars_pattern = r"^[^\n]*?(?:[\d\.]+[smh])\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*[^\s]+\s*\|\s*[^\s]+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|"
-            mvars_matches = re.findall(mvars_pattern, pre_pricing_text, re.MULTILINE)
-            cols_needed = int(mvars_matches[-1]) if mvars_matches else 0
-
-            # 3. SLP iterations main loop
-            slp_pattern = r"^[^\n]*?(?:[\d\.]+[smh])\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*(\d+)\s*\|"
-            slp_matches = re.findall(slp_pattern, full_output, re.MULTILINE)
-            slp_iters_main = int(slp_matches[-1]) if slp_matches else 0
-
-            # 4. SLP iterations custom pricing
-            custom_slp_match = re.search(r"Total simplex iterations in custom pricing loop:\s*(\d+)", full_output)
-            slp_iters_custom = int(custom_slp_match.group(1)) if custom_slp_match else 0
+            cols_needed = 0
+            slp_iters_main = 0
+            slp_iters_custom = 0
 
             status = "SUCCESS" if process.returncode == 0 else "CRASH"
 
@@ -128,3 +125,10 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
     except Exception as e:
         print(f"Error executing SCIP process: {e}")
         return "CRASH", float(timeout), float('inf'), 0
+
+    finally:
+        # Always clean up the temporary metrics file
+        try:
+            os.remove(metrics_path)
+        except FileNotFoundError:
+            pass
