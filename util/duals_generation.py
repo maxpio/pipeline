@@ -44,7 +44,7 @@ RANDOM_GAUSS_SIGMA = config.get("random_gauss_sigma", 5.0)
 # Execution Options
 MULTICORE_SOLVING = config.get("multicore_solving", False)
 MAX_WORKERS = config_full.get("general_settings", {}).get("num_cores", 1)
-SHORT_LOG_OUTPUT = config.get("short_log_output", False)
+SHORT_LOG_OUTPUT = MULTICORE_SOLVING
 
 # Subgradient Algorithm Parameters
 MAX_ITERS = config.get("max_iters", 1000)
