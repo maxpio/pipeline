@@ -159,10 +159,10 @@ class StackedBipartiteGNN(nn.Module):
     """
     Stacks L layers of the BipartiteGNNBlock.
     """
-    def __init__(self, feature_embedding_size, gnn_mlp_dims, num_layers, dropout=0.1):
+    def __init__(self, feature_embedding_size, gnn_mlp_dims, num_message_passing_layers, dropout=0.1):
         super().__init__()
         self.layers = nn.ModuleList([
-            BipartiteGNNBlock(feature_embedding_size, gnn_mlp_dims, dropout=dropout) for _ in range(num_layers)
+            BipartiteGNNBlock(feature_embedding_size, gnn_mlp_dims, dropout=dropout) for _ in range(num_message_passing_layers)
         ])
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
@@ -219,7 +219,7 @@ class LagrangianMultiplierModel(nn.Module):
     """
     The complete model pipeline combining Encoders, Message Passing, and the Decoder.
     """
-    def __init__(self, feature_embedding_size=64, encoder_mlp_dims=[4, 64], gnn_mlp_dims=[64], num_layers=3, dropout=0.1, decoder_mlp_dims=[]):
+    def __init__(self, feature_embedding_size=64, encoder_mlp_dims=[4, 64], gnn_mlp_dims=[64], num_message_passing_layers=3, dropout=0.1, decoder_mlp_dims=[]):
         super().__init__()
         
         # Dynamically append dimensions that depend on feature_embedding_size
@@ -231,7 +231,7 @@ class LagrangianMultiplierModel(nn.Module):
         
         # Step 2: Message Passing Blocks
         self.gnn = StackedBipartiteGNN(
-            feature_embedding_size=feature_embedding_size, gnn_mlp_dims=full_gnn_dims, num_layers=num_layers, dropout=dropout
+            feature_embedding_size=feature_embedding_size, gnn_mlp_dims=full_gnn_dims, num_message_passing_layers=num_message_passing_layers, dropout=dropout
         )
         
         # Step 3: Decoder

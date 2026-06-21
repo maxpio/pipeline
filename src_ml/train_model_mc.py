@@ -61,7 +61,7 @@ FEATURE_EMBEDDING_SIZE = config['model_architecture']['feature_embedding_size']
 ENCODER_MLP_DIMS       = config['model_architecture']['encoder_mlp_dims']
 GNN_MLP_DIMS           = config['model_architecture']['gnn_mlp_dims']
 DECODER_MLP_DIMS       = config['model_architecture']['decoder_mlp_dims']
-NUM_LAYERS             = config['model_architecture']['num_layers']
+NUM_MESSAGE_PASSING_LAYERS = config['model_architecture']['num_message_passing_layers']
 DROPOUT                = config['model_architecture'].get('dropout', 0.1)
 
 # ==========================================
@@ -393,7 +393,7 @@ def train():
         feature_embedding_size=FEATURE_EMBEDDING_SIZE,
         encoder_mlp_dims=ENCODER_MLP_DIMS,
         gnn_mlp_dims=GNN_MLP_DIMS,
-        num_layers=NUM_LAYERS,
+        num_message_passing_layers=NUM_MESSAGE_PASSING_LAYERS,
         decoder_mlp_dims=DECODER_MLP_DIMS,
         dropout=DROPOUT
     ).to(device)

@@ -1,13 +1,13 @@
 """
 Full end-to-end pipeline for batch instance processing:
-  1. Scan lp_dir for .lp files, sample by instance_ratio, union with required_instances
+  1. Scan lp_dir for .lp files, optionally filter by prefix
   2. For each instance: extract LP relaxation features (PySCIPOpt)
   3. Build the bipartite graph and predict dual values with the trained GNN model
   4. Save the predicted duals to a file
   5. Run GCG with the custom pricing plugin that uses the predicted duals
 
 Usage:
-    python -m src_ml.full_pipeline [--lp-dir <dir>] [--dec-dir <dir>] [--instance-ratio 0.1] [--required-instances e10100-1.lp]
+    python -m src_ml.predict [--data-dir <dir>] [--lpfile-subdir <dir>]
 """
 
 import os
@@ -44,7 +44,7 @@ FEATURE_EMBEDDING_SIZE = config['model_architecture']['feature_embedding_size']
 ENCODER_MLP_DIMS = config['model_architecture']['encoder_mlp_dims']
 GNN_MLP_DIMS = config['model_architecture']['gnn_mlp_dims']
 DECODER_MLP_DIMS = config['model_architecture']['decoder_mlp_dims']
-NUM_LAYERS = config['model_architecture']['num_layers']
+NUM_MESSAGE_PASSING_LAYERS = config['model_architecture']['num_message_passing_layers']
 DROPOUT = config['model_architecture'].get('dropout', 0.0)
 
 data_dir = Path(config['general_settings']['data_dir']).resolve()
@@ -80,7 +80,7 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
         feature_embedding_size=FEATURE_EMBEDDING_SIZE,
         encoder_mlp_dims=ENCODER_MLP_DIMS,
         gnn_mlp_dims=GNN_MLP_DIMS,
-        num_layers=NUM_LAYERS,
+        num_message_passing_layers=NUM_MESSAGE_PASSING_LAYERS,
         decoder_mlp_dims=DECODER_MLP_DIMS,
         dropout=DROPOUT
     ).to(device)
@@ -141,28 +141,32 @@ def run_gcg_with_duals(
         print(f"  DEC:  {dec_file}")
         print(f"  DUAL: {dual_file}")
 
+    def b2s(key, default):
+        val = experiment_params.get(key, default)
+        return "TRUE" if str(val).upper() == "TRUE" else "FALSE"
+
     cmd_string = (
         ("set heuristics emphasis off\n" if experiment_params.get('disable_heuristics', True) else "") +
         ("set presolving maxrounds 0\n" if experiment_params.get('disable_presolving', True) else "") +
         ("set separating clique freq -1\n" if experiment_params.get('disable_separating_cliques', True) else "") +
         ("set limits nodes 1\n" if experiment_params.get('solve_root_only', False) else "") +
         f"set pricingcb initduals duals_file {dual_file}\n"
-        f"set pricingcb initduals use_custom_duals {experiment_params.get('use_custom_duals', 'TRUE')}\n"
-        f"set pricingcb initduals use_bigm_artificials {experiment_params.get('use_bigm_artificials', 'FALSE')}\n"
+        f"set pricingcb initduals use_custom_duals {b2s('use_custom_duals', True)}\n"
+        f"set pricingcb initduals use_bigm_artificials {b2s('use_bigm_artificials', False)}\n"
         f"set pricingcb initduals n_perturbation_rounds {experiment_params.get('n_perturbation_rounds', 0)}\n"
         f"set pricingcb initduals perturbation_percent {experiment_params.get('perturbation_percent', 0.05)}\n"
         f"set pricingcb initduals obj_epsilon {experiment_params.get('obj_epsilon', 1e-4)}\n"
         f"set pricingcb initduals rand_seed {config['general_settings'].get('random_seed', 42)}\n"
-        f"set pricingcb initduals add_round_0_columns {experiment_params.get('add_round_0_columns', 'TRUE')}\n"
+        f"set pricingcb initduals add_round_0_columns {b2s('add_round_0_columns', True)}\n"
         f"set pricingcb initduals bigm_value {experiment_params.get('bigm_value', 1000000.0)}\n"
-        f"set pricingcb initduals large_log {experiment_params.get('large_log', 'FALSE')}\n"
-        f"set pricingcb initduals use_smoothing {experiment_params.get('use_smoothing', 'FALSE')}\n"
+        f"set pricingcb initduals large_log {b2s('large_log', False)}\n"
+        f"set pricingcb initduals use_smoothing {b2s('use_smoothing', False)}\n"
         f"set pricingcb initduals smoothing_weight_start {experiment_params.get('smoothing_weight_start', 0.99)}\n"
         f"set pricingcb initduals smoothing_weight_factor {experiment_params.get('smoothing_weight_factor', 0.4)}\n"
         f"set pricingcb initduals smoothing_weight_min {experiment_params.get('smoothing_weight_min', 0.01)}\n"
         f"set pricingcb initduals smoothing_improvement_threshold {experiment_params.get('smoothing_improvement_threshold', 200.0)}\n"
-        f"set pricingcb initduals disable_subprob_presolve_heur {experiment_params.get('disable_subprob_presolve_heur', 'FALSE')}\n"
-        f"set pricing masterpricer stabilization {experiment_params.get('masterpricer_stabilization', 'FALSE')}\n"
+        f"set pricingcb initduals disable_subprob_presolve_heur {b2s('disable_subprob_presolve_heur', False)}\n"
+        f"set pricing masterpricer stabilization {b2s('masterpricer_stabilization', False)}\n"
         f"read {lp_file}\n"
         f"read {dec_file}\n"
         "optimize\nquit\n"
@@ -391,7 +395,7 @@ def main():
                 feature_embedding_size=FEATURE_EMBEDDING_SIZE,
                 encoder_mlp_dims=ENCODER_MLP_DIMS,
                 gnn_mlp_dims=GNN_MLP_DIMS,
-                num_layers=NUM_LAYERS,
+                num_message_passing_layers=NUM_MESSAGE_PASSING_LAYERS,
                 decoder_mlp_dims=DECODER_MLP_DIMS,
                 dropout=DROPOUT
             ).to(device)

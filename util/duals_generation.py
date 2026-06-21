@@ -38,7 +38,6 @@ _subopt_str = str(SUBOPT_PERCENT).split('.')[-1] if '.' in str(SUBOPT_PERCENT) e
 SUBOPT_DUAL_VALUES_DIR = os.path.join(DUAL_BASE_DIR, f"suboptDualvalues{_subopt_str}")
 
 GENERATE_RANDOM = config.get("generate_random", True)
-RANDOM_GAUSS_MU = config.get("random_gauss_mu", 0.0)
 RANDOM_GAUSS_SIGMA = config.get("random_gauss_sigma", 5.0)
 
 # Execution Options
