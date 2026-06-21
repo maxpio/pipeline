@@ -5,8 +5,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 def load_config():
-    with open("config.yaml", "r") as f:
-        return yaml.safe_load(f)
+    config = {}
+    for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
+        if Path(conf_file).exists():
+            with open(conf_file, "r") as f:
+                config.update(yaml.safe_load(f))
+    return config
 
 def main():
     config = load_config()
@@ -14,10 +18,14 @@ def main():
     exp_dir = data_dir / "experiments"
     vis_dir = data_dir / "visualizations"
     vis_dir.mkdir(parents=True, exist_ok=True)
-    files = config.get('visualization_settings', {}).get('experiment_files', [])
+    import sys
+    if len(sys.argv) > 1:
+        files = sys.argv[1:]
+    else:
+        files = config.get('visualization_settings', {}).get('experiment_files', [])
     
     if not files:
-        print("No experiment files defined in config.yaml under visualization_settings.experiment_files")
+        print("No experiment files provided via args or in config.yaml under visualization_settings.experiment_files")
         return
 
     # run_name -> {"total_time": float, "instances": {inst_name: dict}}

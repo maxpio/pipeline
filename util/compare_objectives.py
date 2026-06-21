@@ -3,8 +3,12 @@ import yaml
 from pathlib import Path
 
 def load_config():
-    with open("config.yaml", "r") as f:
-        return yaml.safe_load(f)
+    config = {}
+    for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
+        if Path(conf_file).exists():
+            with open(conf_file, "r") as f:
+                config.update(yaml.safe_load(f))
+    return config
 
 def main():
     config = load_config()

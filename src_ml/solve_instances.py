@@ -7,7 +7,7 @@ Full end-to-end pipeline for batch instance processing:
   5. Run GCG with the custom pricing plugin that uses the predicted duals
 
 Usage:
-    python -m src_ml.predict [--data-dir <dir>] [--lpfile-subdir <dir>]
+    python -m src_ml.solve_instances [--data-dir <dir>] [--lpfile-subdir <dir>]
 """
 
 import os
@@ -20,6 +20,7 @@ import torch
 from pathlib import Path
 from pyscipopt import Model as SCIPModel
 from torch_geometric.data import Batch
+import collections.abc
 
 # ---------------------------------------------------------------------------
 # Resolve project paths so imports work regardless of cwd
@@ -35,9 +36,27 @@ from src_ml.single_runner import run_single_instance
 # ---------------------------------------------------------------------------
 # Load config.yaml (model architecture, defaults, etc.)
 # ---------------------------------------------------------------------------
-CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
-with open(CONFIG_PATH, 'r') as f:
-    config = yaml.safe_load(f)
+def deep_update(d, u):
+    if not u: return d
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = deep_update(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
+config = {}
+for conf_file in ["config/config_general.yaml", "config/config_ml.yaml", "config/config_test_base.yaml"]:
+    path = os.path.join(BASE_DIR, conf_file)
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            deep_update(config, yaml.safe_load(f) or {})
+
+exp_config = os.environ.get("EXPERIMENT_CONFIG")
+if exp_config and os.path.exists(exp_config):
+    print(f"[*] Applying experiment config override: {exp_config}")
+    with open(exp_config, 'r') as f:
+        deep_update(config, yaml.safe_load(f) or {})
 
 # Model Architecture from config
 FEATURE_EMBEDDING_SIZE = config['model_architecture']['feature_embedding_size']

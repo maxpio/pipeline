@@ -8,10 +8,12 @@ from pyscipopt import Model
 
 # --- 1. PATH CONFIGURATION & LOAD SETTINGS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "config.yaml"))
-
-with open(CONFIG_PATH, "r") as f:
-    config_full = yaml.safe_load(f)
+config_full = {}
+for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
+    config_path = os.path.abspath(os.path.join(BASE_DIR, "..", conf_file))
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config_full.update(yaml.safe_load(f))
 
 config = config_full.get("duals_generation_settings", {})
 

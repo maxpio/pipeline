@@ -1,0 +1,36 @@
+# --- Split Parameters ---
+split_parameters:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+
+# --- Duals Generation Script Settings ---
+duals_generation_settings:
+  process_splits: False
+  prefix_filter: ""
+  generate_subopt: True
+  subopt_percent: 0.995
+  generate_random: True
+  random_gauss_sigma: 5.0
+  multicore_solving: False
+  max_iters: 400
+  initial_step_size: 5.0
+  no_improve_limit: 10
+  step_size_shrink: 0.5
+  tolerance: 1.0e-6
+
+# --- Visualization Script Settings ---
+visualization_settings:
+  experiment_files:
+    -  "raw.json"
+    -  "opt.json"
+    -  "opt_pert.json"
+    -  "opt_raw.json"
+    -  "subopt.json"
+    -  "raw_stab.json"
+    -  "rand.json"
+    -  "opt_init_c.json"
+
+# --- Orchestrator Settings ---
+orchestrator_settings:
+  tests_dir: "/home/max/master_ths/pipeline/tests"

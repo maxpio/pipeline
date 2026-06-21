@@ -30,9 +30,12 @@ from src_ml.feature_extractor import extract_features_single
 # ==========================================
 
 # Load configuration from YAML
-CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
-with open(CONFIG_PATH, 'r') as f:
-    config = yaml.safe_load(f)
+config = {}
+for conf_file in ["config/config_general.yaml", "config/config_ml.yaml"]:
+    path = os.path.join(BASE_DIR, conf_file)
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            config.update(yaml.safe_load(f))
 
 # ==========================================
 # TRAINING PATHS  (generated relative to data_dir)

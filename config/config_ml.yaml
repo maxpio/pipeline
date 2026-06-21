@@ -1,0 +1,41 @@
+# --- Model Architecture ---
+model_architecture:
+  feature_embedding_size: 16
+  # The input dimension (4) and final output dimension (feature_embedding_size) are automatically added
+  encoder_mlp_dims: [64]
+  # The input (2 * feature_embedding_size) and output (feature_embedding_size) dimensions are dynamically added
+  gnn_mlp_dims: [128]
+  # The input (feature_embedding_size) and output (1) dimensions are dynamically added
+  decoder_mlp_dims: [64]
+  num_message_passing_layers: 2
+  dropout: 0.3
+
+# --- Training Parameters ---
+training_parameters:
+  load_pretrained: True
+  learning_rate: 2e-5
+  epochs: 100
+  evaluate_validation_loss: True
+  evaluate_validation_every_n_epochs: 25
+  use_gradient_clipping: True
+  gradient_clipping_max_norm: 80.0
+  use_lr_scheduler: True
+  lr_scheduler_factor: 0.3 # multiplicative factor applied to the learning rate when patience runs out
+  lr_scheduler_patience: 20 #  number of epochs the scheduler will wait for the loss to improve before it reduces the learning rate
+  plot_min_gap_closed: 65.0
+  use_random_subset: False
+  random_subset_ratio: 0.3
+  plot_every_n_epochs: 1
+  
+  scip_settings:
+    disable_presolve: False
+    disable_heuristics: False
+    mip_gap: 0.01
+
+  caching_settings:
+    cache_graph: True
+    cache_lag_relax: False  # Cache SCIP LagrangianRelaxation objects in worker processes
+
+# --- Feature Extraction ---
+feature_extraction:
+  presolving_maxrounds: 0

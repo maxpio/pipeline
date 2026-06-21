@@ -6,13 +6,13 @@ import yaml
 
 def read_config():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "..", "config.yaml")
-    
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Could not locate config.yaml at {config_path}")
-        
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+    config = {}
+    for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
+        config_path = os.path.join(script_dir, "..", conf_file)
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Could not locate {conf_file} at {config_path}")
+        with open(config_path, "r") as f:
+            config.update(yaml.safe_load(f))
     return config
 
 def main():
