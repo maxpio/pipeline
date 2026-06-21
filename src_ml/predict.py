@@ -151,6 +151,8 @@ def run_gcg_with_duals(
         f"set pricingcb initduals use_bigm_artificials {experiment_params.get('use_bigm_artificials', 'FALSE')}\n"
         f"set pricingcb initduals n_perturbation_rounds {experiment_params.get('n_perturbation_rounds', 0)}\n"
         f"set pricingcb initduals perturbation_percent {experiment_params.get('perturbation_percent', 0.05)}\n"
+        f"set pricingcb initduals obj_epsilon {experiment_params.get('obj_epsilon', 1e-4)}\n"
+        f"set pricingcb initduals rand_seed {config['general_settings'].get('random_seed', 42)}\n"
         f"set pricingcb initduals add_round_0_columns {experiment_params.get('add_round_0_columns', 'TRUE')}\n"
         f"set pricingcb initduals bigm_value {experiment_params.get('bigm_value', 1000000.0)}\n"
         f"set pricingcb initduals large_log {experiment_params.get('large_log', 'FALSE')}\n"
