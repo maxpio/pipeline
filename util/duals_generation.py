@@ -1,14 +1,20 @@
 """
 Generates optimal, suboptimal, and random dual values (multipliers) for Lagrangian relaxation of MILP instances.
-Reads LP files, relaxes 'hard' constraints, and uses a subgradient method to find dual bounds.
+Reads LP files, relaxes master constraints (from .dec files) and uses a subgradient method to find dual bounds.
 """
 import os
+import sys
 import glob
 import json
 import random
 import concurrent.futures
 import yaml
 from pyscipopt import Model
+
+# Allow importing from src_ml
+_BASE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_BASE, "..", "src_ml"))
+from feature_extractor import get_master_constraints
 
 # Paths and Settings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +32,7 @@ if not DATA_DIR:
     raise ValueError("general_settings -> data_dir not found in config.yaml")
 
 LP_DIR = os.path.join(DATA_DIR, "lpfiles")
+DEC_DIR = os.path.join(DATA_DIR, "decfiles")
 DUAL_BASE_DIR = os.path.join(DATA_DIR, "dualvalues")
 
 DUAL_VALUES_DIR = os.path.join(DUAL_BASE_DIR, "optimal")
@@ -60,22 +67,23 @@ TOLERANCE = float(config.get("tolerance", 1e-6))
 
 class LagrangianRelaxation:
     """Manages the Lagrangian relaxation of an LP model."""
-    def __init__(self, lp_file_path):
-        """Initializes the model from an LP file and extracts hard constraints."""
+    def __init__(self, lp_file_path, dec_file_path):
+        """Initializes the model from an LP file and relaxes master constraints from the .dec file."""
         self.model = Model("Lagrangian_Relaxation")
         self.model.hideOutput()
         self.model.readProblem(lp_file_path)
         self.orig_sense = self.model.getObjectiveSense()
         
+        self.master_conss = get_master_constraints(dec_file_path)
         self.hard_conss = {}
         self.multipliers = {}
         self.orig_obj = {v.name: v.getObj() for v in self.model.getVars()}
         self._extract_and_relax_hard_constraints()
 
     def _extract_and_relax_hard_constraints(self):
-        """Identifies 'hard' constraints, extracts their data, and relaxes their bounds in the model."""
+        """Identifies master constraints (from .dec file), extracts their data, and relaxes their bounds in the model."""
         for cons in self.model.getConss():
-            if "hard" in cons.name:
+            if cons.name in self.master_conss:
                 lhs, rhs = self.model.getLhs(cons), self.model.getRhs(cons)
                 coeffs = {}
                 try:
@@ -204,17 +212,23 @@ def process_instance(lp_file):
     """Processes a single LP instance: finds optimal, suboptimal, and random dual values."""
     filename = os.path.basename(lp_file)
     base_name = os.path.splitext(filename)[0]
+    dec_file = os.path.join(DEC_DIR, f"{base_name}.dec")
     
     if not SHORT_LOG_OUTPUT:
         print(f"\n{'='*40}")
         print(f"Processing {filename}...")
         print(f"{'='*40}")
+    
+    if not os.path.exists(dec_file):
+        if not SHORT_LOG_OUTPUT:
+            print(f"No .dec file found for {filename} at {dec_file}. Skipping...")
+        return filename, None
         
-    lr_model = LagrangianRelaxation(lp_file)
+    lr_model = LagrangianRelaxation(lp_file, dec_file)
     
     if not lr_model.hard_conss:
         if not SHORT_LOG_OUTPUT:
-            print(f"No 'hard' constraints found in {filename}. Skipping...")
+            print(f"No master constraints found in {filename}. Skipping...")
         return filename, None
         
     best_obj, optimal_multipliers, _ = solve_with_subgradient(lr_model)
@@ -315,7 +329,7 @@ if __name__ == "__main__":
                             print(f"[{completed}/{len(lp_files)}] Finished {fn} (Best Dual Objective: {best_obj:.4f})")
                     else:
                         if SHORT_LOG_OUTPUT:
-                            print(f"[{completed}/{len(lp_files)}] Skipped {fn} (No 'hard' constraints)")
+                            print(f"[{completed}/{len(lp_files)}] Skipped {fn} (No master constraints)")
                 except Exception as exc:
                     print(f"[{completed}/{len(lp_files)}] Exception in {filename}: {exc}")
     else:
@@ -329,7 +343,7 @@ if __name__ == "__main__":
                     print(f"[{i+1}/{len(lp_files)}] Finished {fn} (Best Dual Objective: {best_obj:.4f})")
             else:
                 if SHORT_LOG_OUTPUT:
-                    print(f"[{i+1}/{len(lp_files)}] Skipped {fn} (No 'hard' constraints)")
+                    print(f"[{i+1}/{len(lp_files)}] Skipped {fn} (No master constraints)")
             
     os.makedirs(os.path.dirname(RESULTS_JSON_FILE), exist_ok=True)
     with open(RESULTS_JSON_FILE, "w") as f:

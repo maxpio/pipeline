@@ -10,7 +10,6 @@ import sys
 import yaml
 import torch
 import torch.optim as optim
-# import matplotlib.pyplot as plt  # TODO: re-enable once evaluate_results is available
 from torch_geometric.data import Batch
 
 # Resolve paths
@@ -284,6 +283,7 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
         lp_path = os.path.join(TRAIN_LP_DIR, stem + ".lp")
         if not os.path.exists(lp_path):
             lp_path = os.path.join(VAL_LP_DIR, stem + ".lp")
+        dec_path = os.path.join(DEC_DIR, stem + ".dec")
 
         # Access the dualized mask (index 2) directly from CPU graph data
         instance_mask = graph_list[i]['constraint'].x[:, 2].bool().tolist()
@@ -291,7 +291,7 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
 
         dualized_cons_names = [name for j, name in enumerate(all_cons_names) if instance_mask[j]]
         batch_sizes.append(len(dualized_cons_names))
-        worker_args_list.append((file_name, lp_path, dualized_cons_names))
+        worker_args_list.append((file_name, lp_path, dec_path, dualized_cons_names))
 
     current_mip_gap = config['training_parameters']['scip_settings'].get('mip_gap', 0.0) if is_training else 0.0
 

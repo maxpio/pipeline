@@ -59,7 +59,7 @@ def worker_init(cache_flag, capacity):
     else:
         WorkerState.lag_relax_cache = None
 
-def worker_solve(file_name, lp_path, mult_dict, mip_gap):
+def worker_solve(file_name, lp_path, dec_path, mult_dict, mip_gap):
     """Executes SCIP optimization."""
     start_time = time.time()
     
@@ -68,7 +68,8 @@ def worker_solve(file_name, lp_path, mult_dict, mip_gap):
         lag_relax_env.model.setRealParam("limits/gap", mip_gap)
     else:
         lag_relax_env = LagrangianRelaxation(
-            lp_path, 
+            lp_path,
+            dec_path,
             disable_presolve=DISABLE_PRESOLVE, 
             disable_heuristics=DISABLE_HEURISTICS,
             mip_gap=mip_gap
@@ -98,11 +99,11 @@ class BatchedSubgradientLoss(torch.autograd.Function):
         
         # Call SCIP solvers
         futures = []
-        for i, (file_name, lp_path, cons_names) in enumerate(worker_args_list):
+        for i, (file_name, lp_path, dec_path, cons_names) in enumerate(worker_args_list):
             mult_dict = dict(zip(cons_names, actual_mult_splits[i].tolist()))
             worker_id = file_to_worker_map.get(file_name, 0)
             executor = executors[worker_id] if isinstance(executors, list) else executors
-            futures.append(executor.submit(worker_solve, file_name, lp_path, mult_dict, mip_gap))
+            futures.append(executor.submit(worker_solve, file_name, lp_path, dec_path, mult_dict, mip_gap))
             
         bounds = []
         violations_list = []
@@ -117,7 +118,7 @@ class BatchedSubgradientLoss(torch.autograd.Function):
             
         # Extract subgradients
         all_subgradients = []
-        for i, (file_name, lp_path, cons_names) in enumerate(worker_args_list):
+        for i, (file_name, lp_path, dec_path, cons_names) in enumerate(worker_args_list):
             v_dict = violations_list[i]
             all_subgradients.extend([v_dict[c_name] for c_name in cons_names])
             
