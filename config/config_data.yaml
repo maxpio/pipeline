@@ -1,28 +1,28 @@
 # --- Split Parameters ---
 split_parameters:
-  train_ratio: 0.8
-  val_ratio: 0.1
-  test_ratio: 0.1
+  train_ratio: 0.8  # Fraction of instances used for training
+  val_ratio: 0.1  # Fraction of instances used for validation
+  test_ratio: 0.1  # Fraction of instances used for testing
 
 # --- Duals Generation Script Settings ---
 duals_generation_settings:
-  process_splits: False
-  prefix_filter: ""
-  generate_subopt: True
-  subopt_percent: 0.997
-  generate_random: True
-  random_gauss_sigma: 5.0
-  multicore_solving: True
-  max_iters: 500
-  initial_step_size: 5.0
-  no_improve_limit: 10
-  step_size_shrink: 0.5
-  tolerance: 1.0e-6
+  process_splits: True  # Whether to process dataset splits (train/val/test) for duals generation
+  prefix_filter: ""  # Only process files starting with this prefix (empty means all)
+  generate_subopt: False  # Whether to generate suboptimal dual multipliers in addition to the optimal ones
+  subopt_percent: 0.90  # Percentage of optimality to target for suboptimal duals
+  generate_random: False  # Whether to generate random dual multipliers
+  random_gauss_sigma: 10.0  # Standard deviation for the Gaussian noise used in random dual generation
+  multicore_solving: True  # Use multiple CPU cores to generate duals in parallel
+  max_iters: 500  # Maximum number of iterations for the subgradient algorithm
+  initial_step_size: 20.0  # Initial step size for the subgradient method in dual generation
+  no_improve_limit: 10  # Number of iterations without improvement before shrinking step size
+  step_size_shrink: 0.5  # Factor by which the step size is multiplied upon stalling
+  tolerance: 1.0e-6  # Convergence tolerance for the subgradient optimization
 
 # --- Visualization Script Settings ---
 visualization_settings:
-  process_all: True
-  experiment_files:
+  process_all: True  # If true, visualizes all JSON results in the experiments folder
+  experiment_files:  # List of specific experiment JSON files to visualize (used if process_all is false)
     -  "raw.json"
     -  "opt.json"
     -  "opt_pert.json"
@@ -34,4 +34,4 @@ visualization_settings:
 
 # --- Orchestrator Settings ---
 orchestrator_settings:
-  tests_dir: "/home/max/master_ths/pipeline/tests"
+  tests_dir: "/home/max/master_ths/pipeline/tests"  # Directory containing YAML experiment config files to run

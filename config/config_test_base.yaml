@@ -1,29 +1,29 @@
 # --- Prediction Script Parameters ---
 prediction_parameters:
-  timeout: 3600
-  lpfile_subdir: ""
-  dualvalue_type: "optimal"
-  experiment_json_name: "opt.json"
-  skip_prediction: True
+  timeout: 3600  # Maximum solving time per instance in seconds
+  lpfile_subdir: "test"  # Subdirectory of LP files to evaluate on (e.g. test, val, train)
+  dualvalue_type: "optimal"  # Type of duals to fetch or predict (e.g., optimal, predicted, random)
+  experiment_json_name: "opt.json"  # Name of the output JSON file storing the experiment metrics
+  skip_prediction: True  # If true, skips ML prediction and uses existing saved dual files
   only_with_prefix: ""  # Only instances with this prefix are processed. If empty, all are processed.
   
   gcg_settings:
-    use_custom_duals: True
-    disable_heuristics: True
-    disable_presolving: True
-    disable_separating_cliques: True
-    disable_subprob_presolve_heur: True
-    masterpricer_stabilization: False
-    solve_root_only: True
-    use_smoothing: True
-    smoothing_weight_start: 0.99
-    smoothing_weight_factor: 0.4
-    smoothing_weight_min: 0.01
-    smoothing_improvement_threshold: 10.0
-    n_perturbation_rounds: 0
-    perturbation_percent: 0.007
-    add_round_0_columns: False
-    large_log: False
-    use_bigm_artificials: False
-    bigm_value: 1000000.0
-    obj_epsilon: 0
+    use_custom_duals: True  # If true, provides custom dual values to the GCG pricing plugin
+    disable_heuristics: True  # If true, disables SCIP/GCG heuristics
+    disable_presolving: True  # If true, disables SCIP/GCG presolving
+    disable_separating_cliques: True  # If true, disables clique separation in SCIP
+    disable_subprob_presolve_heur: True  # If true, disables presolving and heuristics in pricing subproblems
+    masterpricer_stabilization: False  # If true, activates GCG's built-in master pricer stabilization
+    solve_root_only: False  # If true, limits solving to the root node only (nodes limit 1)
+    use_smoothing: True  # If true, uses dual smoothing in the custom pricing plugin
+    smoothing_weight_start: 0.99  # Initial smoothing weight alpha for the dual smoothing formula
+    smoothing_weight_factor: 0.4  # Multiplicative factor to update smoothing weight after improvements
+    smoothing_weight_min: 0.01  # Minimum allowed smoothing weight (smoothing gets deactivated after this value is reached)
+    smoothing_improvement_threshold: 10.0  # Required dual bound improvement to not trigger weight update
+    n_perturbation_rounds: 0  # Number of initial rounds to perturb the objective to generate diverse columns
+    perturbation_percent: 0.007  # Percentage magnitude of objective perturbation
+    add_round_0_columns: False  # If true, initializes the RMP with extra columns in round 0
+    large_log: False  # If true, enables verbose logging in the custom pricing plugin
+    use_bigm_artificials: False  # If true, uses Big-M artificial variables to ensure RMP feasibility
+    bigm_value: 1000000.0  # Cost penalty for Big-M artificial variables
+    obj_epsilon: 0 # Modification of objective function of the pricing problem. For more information check out the manual

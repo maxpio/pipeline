@@ -1,41 +1,41 @@
 # --- Model Architecture ---
 model_architecture:
-  feature_embedding_size: 16
+  feature_embedding_size: 16  # Dimension of the initial feature embeddings
   # The input dimension (4) and final output dimension (feature_embedding_size) are automatically added
-  encoder_mlp_dims: [64]
+  encoder_mlp_dims: [64]  # Hidden layer dimensions for the node feature encoder MLP
   # The input (2 * feature_embedding_size) and output (feature_embedding_size) dimensions are dynamically added
-  gnn_mlp_dims: [128]
+  gnn_mlp_dims: [128]  # Hidden layer dimensions inside the Message Passing (GNN) layers
   # The input (feature_embedding_size) and output (1) dimensions are dynamically added
-  decoder_mlp_dims: [64]
-  num_message_passing_layers: 2
-  dropout: 0.3
+  decoder_mlp_dims: [64]  # Hidden layer dimensions for the final dual multiplier decoder MLP
+  num_message_passing_layers: 2  # Number of bipartite message passing iterations
+  dropout: 0.3  # Dropout probability used in the neural network layers
 
 # --- Training Parameters ---
 training_parameters:
-  load_pretrained: True
-  learning_rate: 2e-5
-  epochs: 100
-  evaluate_validation_loss: True
-  evaluate_validation_every_n_epochs: 25
-  use_gradient_clipping: True
-  gradient_clipping_max_norm: 80.0
-  use_lr_scheduler: True
-  lr_scheduler_factor: 0.3 # multiplicative factor applied to the learning rate when patience runs out
+  load_pretrained: True  # If true, loads existing model weights before starting training
+  learning_rate: 1e-5  # Learning rate for the optimizer
+  epochs: 200  # Total number of training epochs
+  evaluate_validation_loss: True  # If true, computes loss on the validation set during training
+  evaluate_validation_every_n_epochs: 50  # Frequency (in epochs) of running validation evaluation
+  use_gradient_clipping: True  # If true, applies gradient clipping to prevent exploding gradients
+  gradient_clipping_max_norm: 80.0  # Maximum allowed norm for gradients when clipping
+  use_lr_scheduler: True  # If true, uses a learning rate scheduler to reduce LR on plateau
+  lr_scheduler_factor: 0.5 # multiplicative factor applied to the learning rate when patience runs out
   lr_scheduler_patience: 20 #  number of epochs the scheduler will wait for the loss to improve before it reduces the learning rate
-  plot_min_gap_closed: 65.0
-  use_random_subset: False
-  random_subset_ratio: 0.3
-  plot_every_n_epochs: 1
+  plot_min_gap_closed: 65.0  # Minimum gap closed percentage in visualization output to scale it
+  use_random_subset: False  # If true, trains on a random subset of data each epoch and not the full training set
+  random_subset_ratio: 0.3  # Ratio of the dataset to use when use_random_subset is true
+  plot_every_n_epochs: 1  # Frequency (in epochs) of updating/saving training loss plots
   
   scip_settings:
-    disable_presolve: False
-    disable_heuristics: False
-    mip_gap: 0.01
+    disable_presolve: False  # If true, disables SCIP presolving during ML training processes
+    disable_heuristics: False  # If true, disables SCIP heuristics during ML training processes
+    mip_gap: 0.01  # Target MIP gap for SCIP during Lagrangian subproblem solving
 
   caching_settings:
-    cache_graph: True
-    cache_lag_relax: False  # Cache SCIP LagrangianRelaxation objects in worker processes
+    cache_graph: True  # If true, caches built graph structures in memory to speed up training
+    cache_lag_relax: False  # Cache SCIP LagrangianRelaxation objects in worker processes (highly experimental)
 
 # --- Feature Extraction ---
 feature_extraction:
-  presolving_maxrounds: 0
+  presolving_maxrounds: 0  # Maximum presolving rounds in SCIP when extracting features

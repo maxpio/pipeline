@@ -13,10 +13,9 @@ Combination dimensions
             masterpricer_stabilization=False  → append "rw"
    False → those four params flipped              → append "dflt"
 
-2. duals (4 options)
-   opt   → dualvalue_type="optimal",          use_custom_duals=True  → append "opt"
-   sub   → dualvalue_type="suboptDualvalues997", use_custom_duals=True → append "sub"
-   rnd   → dualvalue_type="random",           use_custom_duals=True  → append "rnd"
+2. duals (3 options)
+   opt   → dualvalue_type="optimal",          use_custom_duals=True  → append "o"
+   pred  → dualvalue_type="predicted",        use_custom_duals=True  → append "p"
    none  → dualvalue_type="random",           use_custom_duals=False → append ""
 
 3. master_smoothing (boolean)
@@ -188,7 +187,7 @@ RAW_OPTIONS = [
 # Dim 2: duals
 DUALS_OPTIONS = [
     ("opt",  "o", "optimal",             True),
-    ("sub",  "s", "suboptDualvalues997",  True),
+    ("pred", "p",   "predicted",           True),
     ("none", "",    "random",              False),
 ]
 
