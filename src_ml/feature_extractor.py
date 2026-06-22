@@ -1,8 +1,11 @@
+"""
+Extracts LP relaxation features and generates JSON for machine learning models.
+"""
 import time
 from pyscipopt import Model as SCIPModel
 
 def get_master_constraints(dec_file: str) -> set:
-    """Parses a .dec file and returns a set of constraint names in the MASTERCONSS block."""
+    """Parses a .dec file to find master constraint names."""
     master_conss = set()
     with open(dec_file, 'r') as f:
         in_master = False
@@ -21,16 +24,7 @@ def get_master_constraints(dec_file: str) -> set:
     return master_conss
 
 def extract_features_single(lp_file: str, dec_file: str, maxrounds: int = 0, quiet: bool = False, extract_lp_bound: bool = False) -> dict | tuple[dict, float]:
-    """
-    Extracts LP relaxation features from a single .lp file using PySCIPOpt.
-    If extract_lp_bound is True, returns (feature_dictionary, lp_obj_val).
-    Otherwise returns the feature dictionary (same schema as lp_to_json_general.py output).
-    
-    The dictionary contains:
-      - "variables": { var_name: {w, lpr_val, rc_val, is_int}, ... }
-      - "constraints": { cons_name: {rhs, eq, dualized, pi}, ... }
-      - "edges": [ {c, v, coeff}, ... ]
-    """
+    """Extracts LP relaxation features from a single .lp file."""
     if not quiet:
         print(f"[Step 1] Extracting LP relaxation features from: {lp_file}")
     start = time.time()
@@ -73,7 +67,7 @@ def extract_features_single(lp_file: str, dec_file: str, maxrounds: int = 0, qui
             "dualized": 1 if c_name in master_conss else 0
         }
 
-        # Matrix coefficient extraction
+        # Extract coefficients
         linear_coefs = model.getValsLinear(cons)
         for var_key, coef in linear_coefs.items():
             if coef != 0.0:
@@ -103,7 +97,7 @@ def extract_features_single(lp_file: str, dec_file: str, maxrounds: int = 0, qui
     else:
         if not quiet:
             print(f"  Warning: LP relaxation status is '{model.getStatus()}', features may be incomplete.")
-        # Fill in defaults so the graph can still be built
+        # Fill default features
         for v_name in variables_dict:
             variables_dict[v_name].setdefault("lpr_val", 0.0)
             variables_dict[v_name].setdefault("rc_val", 0.0)
@@ -130,9 +124,7 @@ def extract_features_single(lp_file: str, dec_file: str, maxrounds: int = 0, qui
     return feature_dict
 
 def generate_feature_json(lp_file: str, dec_file: str, out_json: str, maxrounds: int = 0, quiet: bool = False):
-    """
-    Generates the .json ML input file for a single instance.
-    """
+    """Generates the .json ML input file for a single instance."""
     import json
     feature_dict = extract_features_single(lp_file, dec_file, maxrounds=maxrounds, quiet=quiet)
     with open(out_json, 'w') as f:

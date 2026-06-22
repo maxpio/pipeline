@@ -1,3 +1,7 @@
+"""
+Generates optimal, suboptimal, and random dual values (multipliers) for Lagrangian relaxation of MILP instances.
+Reads LP files, relaxes 'hard' constraints, and uses a subgradient method to find dual bounds.
+"""
 import os
 import glob
 import json
@@ -6,7 +10,7 @@ import concurrent.futures
 import yaml
 from pyscipopt import Model
 
-# --- 1. PATH CONFIGURATION & LOAD SETTINGS ---
+# Paths and Settings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config_full = {}
 for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
@@ -47,16 +51,17 @@ MULTICORE_SOLVING = config.get("multicore_solving", False)
 MAX_WORKERS = config_full.get("general_settings", {}).get("num_cores", 1)
 SHORT_LOG_OUTPUT = MULTICORE_SOLVING
 
-# Subgradient Algorithm Parameters
+# Subgradient Params
 MAX_ITERS = config.get("max_iters", 1000)
 INITIAL_STEP_SIZE = config.get("initial_step_size", 4.0)
 NO_IMPROVE_LIMIT = config.get("no_improve_limit", 10)
 STEP_SIZE_SHRINK = config.get("step_size_shrink", 0.5)
 TOLERANCE = float(config.get("tolerance", 1e-6))
 
-# --- 2. MODEL CLASS ---
 class LagrangianRelaxation:
+    """Manages the Lagrangian relaxation of an LP model."""
     def __init__(self, lp_file_path):
+        """Initializes the model from an LP file and extracts hard constraints."""
         self.model = Model("Lagrangian_Relaxation")
         self.model.hideOutput()
         self.model.readProblem(lp_file_path)
@@ -68,6 +73,7 @@ class LagrangianRelaxation:
         self._extract_and_relax_hard_constraints()
 
     def _extract_and_relax_hard_constraints(self):
+        """Identifies 'hard' constraints, extracts their data, and relaxes their bounds in the model."""
         for cons in self.model.getConss():
             if "hard" in cons.name:
                 lhs, rhs = self.model.getLhs(cons), self.model.getRhs(cons)
@@ -81,11 +87,11 @@ class LagrangianRelaxation:
                 self.hard_conss[cons.name] = {"coeffs": coeffs, "lhs": lhs, "rhs": rhs}
                 self.multipliers[cons.name] = 0.0
                 
-                # Relax the bounds
                 self.model.chgLhs(cons, -self.model.infinity())
                 self.model.chgRhs(cons, self.model.infinity())
 
     def set_multipliers(self, multipliers_dict):
+        """Updates the Lagrangian multipliers and recalculates the objective function."""
         if self.model.getStage() != "problem":
             self.model.freeTransform()
         
@@ -93,6 +99,7 @@ class LagrangianRelaxation:
         self._update_objective()
 
     def _update_objective(self):
+        """Updates the model's objective function based on the current multipliers."""
         new_obj_coeffs = self.orig_obj.copy()
         inf = self.model.infinity()
         self.lagrangian_offset = 0.0
@@ -122,6 +129,7 @@ class LagrangianRelaxation:
         self.model.setObjective(new_obj_expr, sense=self.orig_sense)
 
     def optimize_and_get_violations(self):
+        """Optimizes the relaxed model and returns the dual bound and constraint violations."""
         self.model.optimize()
         if self.model.getStatus() not in ("optimal", "gaplimit"):
             return None, None
@@ -143,8 +151,8 @@ class LagrangianRelaxation:
             
         return bound, violations
 
-# --- 3. SUBGRADIENT METHOD ---
 def solve_with_subgradient(lr_model, target_opt=None, subopt_percent=None):
+    """Executes the subgradient method to optimize the Lagrangian multipliers."""
     multipliers = {cons_name: 0.0 for cons_name in lr_model.hard_conss}
     best_dual_bound = -float('inf') if lr_model.orig_sense == "minimize" else float('inf')
     best_multipliers = multipliers.copy()
@@ -192,8 +200,8 @@ def solve_with_subgradient(lr_model, target_opt=None, subopt_percent=None):
 
     return best_dual_bound, best_multipliers, history
 
-# --- 4. WORKER FUNCTION ---
 def process_instance(lp_file):
+    """Processes a single LP instance: finds optimal, suboptimal, and random dual values."""
     filename = os.path.basename(lp_file)
     base_name = os.path.splitext(filename)[0]
     
@@ -209,9 +217,6 @@ def process_instance(lp_file):
             print(f"No 'hard' constraints found in {filename}. Skipping...")
         return filename, None
         
-    # First Run: Find Optimal
-    if not SHORT_LOG_OUTPUT:
-        print("--- Running to find Optimal Multipliers ---")
     best_obj, optimal_multipliers, _ = solve_with_subgradient(lr_model)
     
     if not SHORT_LOG_OUTPUT:
@@ -224,7 +229,6 @@ def process_instance(lp_file):
     if not SHORT_LOG_OUTPUT:
         print(f"Saved optimal multipliers to: {out_file_opt}")
 
-    # Second Run: Find Suboptimal
     if GENERATE_SUBOPT:
         if not SHORT_LOG_OUTPUT:
             print(f"--- Running to find Suboptimal Multipliers (Target: within {SUBOPT_PERCENT*100}% of {best_obj:.4f}) ---")
@@ -237,10 +241,8 @@ def process_instance(lp_file):
         if not SHORT_LOG_OUTPUT:
             print(f"Saved suboptimal multipliers to: {out_file_subopt}")
 
-    # Random Generation based on Optimal
     if GENERATE_RANDOM:
-        # Determine if duals are positive automatically
-        is_duals_positive = False  # Default fallback
+        is_duals_positive = False
         for val in optimal_multipliers.values():
             if val > 1e-6:
                 is_duals_positive = True
@@ -273,7 +275,6 @@ def process_instance(lp_file):
         
     return base_name, best_obj
 
-# --- 5. EXECUTION ---
 if __name__ == "__main__":
     os.makedirs(DUAL_VALUES_DIR, exist_ok=True)
     if GENERATE_SUBOPT:

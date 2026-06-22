@@ -1,3 +1,6 @@
+"""
+Training script for the Lagrangian Multiplier GNN.
+"""
 import os
 import json
 import random
@@ -10,9 +13,7 @@ import torch.optim as optim
 # import matplotlib.pyplot as plt  # TODO: re-enable once evaluate_results is available
 from torch_geometric.data import Batch
 
-# ---------------------------------------------------------------------------
-# Resolve project paths so imports work regardless of cwd
-# ---------------------------------------------------------------------------
+# Resolve paths
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(CURRENT_DIR)
 sys.path.append(BASE_DIR)
@@ -22,14 +23,12 @@ from src_ml.model import LagrangianMultiplierModel
 from src_ml.loss_mc import BatchedSubgradientLoss, worker_init
 from src_ml.feature_extractor import extract_features_single
 
-# NOTE: evaluate_results import is deactivated until the script is available
+# Deactivated import
 # from util.evaluate_results import main as evaluate_main
 
-# ==========================================
-# CONFIGURATION & HYPERPARAMETERS
-# ==========================================
+# Config
 
-# Load configuration from YAML
+# Load config
 config = {}
 for conf_file in ["config/config_general.yaml", "config/config_ml.yaml"]:
     path = os.path.join(BASE_DIR, conf_file)
@@ -37,9 +36,7 @@ for conf_file in ["config/config_general.yaml", "config/config_ml.yaml"]:
         with open(path, 'r') as f:
             config.update(yaml.safe_load(f))
 
-# ==========================================
-# TRAINING PATHS  (generated relative to data_dir)
-# ==========================================
+# Training paths
 DATA_DIR       = config['general_settings']['data_dir']
 
 LP_DIR         = os.path.join(DATA_DIR, "lpfiles")         # contains training/, val/, test/ subdirs
@@ -57,9 +54,7 @@ BOXPLOT_PATH   = os.path.join(DATA_DIR, "training_plots", "best_model_boxplots.p
 TRAIN_LP_DIR   = os.path.join(LP_DIR, "training")
 VAL_LP_DIR     = os.path.join(LP_DIR, "val")
 
-# ==========================================
-# MODEL ARCHITECTURE
-# ==========================================
+# Model architecture
 FEATURE_EMBEDDING_SIZE = config['model_architecture']['feature_embedding_size']
 ENCODER_MLP_DIMS       = config['model_architecture']['encoder_mlp_dims']
 GNN_MLP_DIMS           = config['model_architecture']['gnn_mlp_dims']
@@ -67,9 +62,7 @@ DECODER_MLP_DIMS       = config['model_architecture']['decoder_mlp_dims']
 NUM_MESSAGE_PASSING_LAYERS = config['model_architecture']['num_message_passing_layers']
 DROPOUT                = config['model_architecture'].get('dropout', 0.1)
 
-# ==========================================
-# TRAINING PARAMETERS
-# ==========================================
+# Training parameters
 LOAD_PRETRAINED                    = config['training_parameters']['load_pretrained']
 LEARNING_RATE                      = float(config['training_parameters']['learning_rate'])
 EPOCHS                             = config['training_parameters']['epochs']
@@ -86,15 +79,11 @@ USE_LR_SCHEDULER                   = config['training_parameters']['use_lr_sched
 LR_SCHEDULER_FACTOR                = config['training_parameters']['lr_scheduler_factor']
 LR_SCHEDULER_PATIENCE              = config['training_parameters']['lr_scheduler_patience']
 
-# ==========================================
-# PARALLELIZATION & BATCHING
-# ==========================================
+# Parallelization
 NUM_CORES  = config['general_settings']['num_cores']
 BATCH_SIZE = config['general_settings']['gpu_batch_size']
 
-# ==========================================
-# CACHING SETTINGS
-# ==========================================
+# Caching settings
 CACHE_GRAPH              = config['training_parameters']['caching_settings']['cache_graph']
 CACHE_LAG_RELAX          = config['training_parameters']['caching_settings'].get('cache_lag_relax', False)
 RESHUFFLE_EVERY_N_EPOCHS = config['training_parameters']['caching_settings'].get('reshuffle_allocation_every_n_epochs', 0)
@@ -102,12 +91,10 @@ WARMUP_EPOCHS            = config['training_parameters']['caching_settings'].get
 SMA_ALPHA                = config['training_parameters']['caching_settings'].get('solve_time_sma_alpha', 0.5)
 TRACK_AFTER_WARMUP       = config['training_parameters']['caching_settings'].get('track_solve_times_after_warmup', False)
 
-# ==========================================
-# FEATURE JSON GENERATION
-# ==========================================
+# Feature JSON generation
 
 def _gen_json_worker(args):
-    """Worker: extract features for one (lp_path, dec_path) and write to out_json."""
+    """Extracts features for one instance and writes to JSON."""
     lp_path, dec_path, out_json = args
     maxrounds = config['feature_extraction'].get('presolving_maxrounds', 0)
     feature_dict, lp_obj_val = extract_features_single(lp_path, dec_path, maxrounds=maxrounds, quiet=True, extract_lp_bound=True)
@@ -117,12 +104,7 @@ def _gen_json_worker(args):
     return out_json, lp_obj_val
 
 def ensure_feature_jsons(lp_subdir: str, label: str):
-    """
-    Scans lp_subdir for .lp files and ensures a matching .json exists in FEATURE_DIR.
-    Missing files are generated in parallel using extract_features_single.
-
-    Returns the list of .json filenames (basenames) that are available for training/val.
-    """
+    """Ensures feature JSONs exist for all LP files."""
     os.makedirs(FEATURE_DIR, exist_ok=True)
 
     lp_files = sorted(f for f in os.listdir(lp_subdir) if f.endswith(".lp"))
@@ -202,11 +184,7 @@ def ensure_feature_jsons(lp_subdir: str, label: str):
 
 
 def get_train_val_files():
-    """
-    Returns (train_files, val_files) as lists of .json basenames by reading
-    from training/ and val/ subdirectories of LP_DIR.
-    Also triggers feature JSON generation for any missing files.
-    """
+    """Returns lists of train and val JSON basenames."""
     print("--- Checking / generating feature .json files ---")
     train_files = ensure_feature_jsons(TRAIN_LP_DIR, "training")
     val_files   = ensure_feature_jsons(VAL_LP_DIR,   "val")
@@ -220,12 +198,10 @@ def get_train_val_files():
     return train_files, val_files
 
 
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
+# Helper functions
 
 def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
-    """Calculates the total gap closed and relative closeness for a batch of instances."""
+    """Calculates gap closed and relative closeness for a batch."""
     if not labels_dict or not lp_bounds_dict:
         return 0.0, 0, 0.0, [], []
 
@@ -270,11 +246,11 @@ def compute_batch_gap_closed(actual_files, bounds, labels_dict, lp_bounds_dict):
 
 
 def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache, cons_names_cache, device, is_training=True):
-    """Handles the forward pass and parallel solver execution for a batch of instances."""
+    """Handles forward pass and parallel solver execution for a batch."""
     if not batch_files:
         return None, [], []
 
-    # 1. Load Graphs and Constraint Names
+    # Load graphs
     graph_list = []
     batch_cons_names = []
     for file_name in batch_files:
@@ -295,11 +271,11 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
         graph_list.append(graph_data)
         batch_cons_names.append(all_cons_names)
 
-    # 2. GPU/Batched Forward Pass
+    # Batched forward pass
     batch_data = Batch.from_data_list(graph_list).pin_memory().to(device, non_blocking=True)
     lambda_raw_batch, mask_batch, eq_flags_batch = model(batch_data)
 
-    # 3. Prepare parameters for parallel solver execution
+    # Prepare solver args
     batch_sizes = []
     worker_args_list = []
 
@@ -319,7 +295,7 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
 
     current_mip_gap = config['training_parameters']['scip_settings'].get('mip_gap', 0.0) if is_training else 0.0
 
-    # 4. Solver execution via Custom Batched Autograd
+    # Solver execution
     loss, bounds, solve_times = BatchedSubgradientLoss.apply(
         lambda_raw_batch, eq_flags_batch, batch_sizes,
         worker_args_list, executors, file_to_worker_map, current_mip_gap
@@ -328,11 +304,10 @@ def process_batch(batch_files, model, executors, file_to_worker_map, graph_cache
     return loss, batch_files, bounds, solve_times
 
 
-# ==========================================
-# MAIN LOOP
-# ==========================================
+# Main loop
 
 def train():
+    """Main training loop."""
     # Ensure plots directories exist
     os.makedirs(os.path.dirname(PLOT_PATH), exist_ok=True)
     if BOXPLOT_PATH:
@@ -580,9 +555,7 @@ def train():
                 else:
                     print(f"[*] Initial Validation Score: {avg_val_loss:.4f}\n")
 
-        # ------------------------------------------------------------------
-        # Training Loop
-        # ------------------------------------------------------------------
+        # Training loop
         for epoch in range(EPOCHS):
             is_warmup   = CACHE_LAG_RELAX and (epoch < WARMUP_EPOCHS)
             should_cache = CACHE_LAG_RELAX and not is_warmup
@@ -776,9 +749,7 @@ def train():
                 plt.savefig(PLOT_PATH)
                 plt.close()
 
-        # ------------------------------------------------------------------
         # Final Validation
-        # ------------------------------------------------------------------
         last_epoch_evaluated = val_files and EVALUATE_VALIDATION_LOSS and (EPOCHS % EVALUATE_VALIDATION_EVERY_N_EPOCHS == 0)
         if not last_epoch_evaluated and val_files:
             print("\n--- Starting Final Validation ---")
@@ -825,9 +796,7 @@ def train():
             torch.save(model.state_dict(), WEIGHTS_PATH)
             print(f"Model saved to '{WEIGHTS_PATH}'")
 
-        # ------------------------------------------------------------------
         # Export Results to JSON
-        # ------------------------------------------------------------------
         if val_files:
             print("\n--- Generating Results JSON ---")
             results_dict = {}
@@ -849,7 +818,7 @@ def train():
                 json.dump(results_dict, f, indent=4)
             print(f"Results successfully saved to '{RESULTS_PATH}'")
 
-        # NOTE: Final evaluation via evaluate_results is deactivated until the script is available
+        # Deactivated import
         # print("\n--- Running Final Evaluation ---")
         # evaluate_main()
 

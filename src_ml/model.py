@@ -1,13 +1,14 @@
+"""
+Defines the PyTorch model for predicting Lagrangian multipliers using a bipartite GNN.
+"""
 import torch
 import torch.nn as nn
 from torch_geometric.nn import MessagePassing
 
 class EncoderMLP(nn.Module):
-    """
-    A standard MLP block for the initial node encoders.
-    Sequence: Linear -> (ReLU -> Linear)*
-    """
+    """A standard MLP block."""
     def __init__(self, layer_dims):
+        """Initializes the MLP layers."""
         super().__init__()
         layers = []
         for i in range(len(layer_dims) - 1):
@@ -17,55 +18,46 @@ class EncoderMLP(nn.Module):
         self.encoder = nn.Sequential(*layers)
 
     def forward(self, x):
+        """Passes input through the MLP."""
         return self.encoder(x)
 
 class InitialNodeEncoders(nn.Module):
-    """
-    Processes the raw features for variables and constraints into a 
-    shared hidden dimension prior to message passing.
-    """
+    """Encodes raw features into a shared hidden dimension."""
     def __init__(self, encoder_mlp_dims=[64]):
+        """Initializes encoders."""
         super().__init__()
         
-        
-        # Variable Encoder (3 continuous + 1 binary)
+        # Var encoder
         self.var_encoder = EncoderMLP([4] + encoder_mlp_dims)
         
-        # Constraint Encoder (2 continuous + 2 binary)
+        # Cons encoder
         self.cons_encoder = EncoderMLP([4] + encoder_mlp_dims)
 
     def forward(self, x_dict):
-        """
-        Expects a dictionary of node features, typical when working with 
-        PyG's HeteroData (e.g., hetero_data.x_dict).
-        """
+        """Encodes dictionary of node features."""
         var_x = x_dict['variable']
         cons_x = x_dict['constraint']
         
         var_h = self.var_encoder(var_x)
-        
         cons_h = self.cons_encoder(cons_x)
         
-        # Return an updated dictionary of embedded node features
+        # Return embeddings
         return {
             'variable': var_h,
             'constraint': cons_h
         }
     
 class BipartiteUpdate(MessagePassing):
-    """
-    A generic message passing layer that can handle both:
-    - Step A: Constraints to Variables
-    - Step B: Variables to Constraints
-    """
+    """Generic message passing layer for bipartite graphs."""
     def __init__(self, feature_embedding_size, gnn_mlp_dims, dropout=0.1):
-        # aggr='add' corresponds to the summation in your formulas
+        """Initializes message passing components."""
+        # Add aggregation
         super().__init__(aggr='add') 
         
-        # The learnable weight matrix W (W_C for Step A, W_V for Step B)
+        # Learnable weights
         self.W = nn.Linear(feature_embedding_size, feature_embedding_size, bias=False)
         
-        # The MLP applied to the concatenation of the current state and the message
+        # Update MLP
         layers = []
         for i in range(len(gnn_mlp_dims) - 1):
             layers.append(nn.Linear(gnn_mlp_dims[i], gnn_mlp_dims[i+1]))
@@ -75,61 +67,51 @@ class BipartiteUpdate(MessagePassing):
                 
         self.mlp = nn.Sequential(*layers)
         
-        # LayerNorm layer
+        # Layer norm
         self.norm = nn.LayerNorm(feature_embedding_size)
 
     def forward(self, source_x, target_x, edge_index, edge_attr):
-        """
-        source_x: Features of the nodes sending messages (e.g., h_c)
-        target_x: Features of the nodes receiving messages (e.g., h_v)
-        """
-        # Apply the learnable weight matrix to the source features: W * h^(l)
+        """Propagates and updates node features."""
+        # Transform source
         transformed_source = self.W(source_x)
         
-        # Propagate messages. We explicitly pass x as a tuple of (source, target)
-        # to handle the bipartite nature correctly.
+        # Propagate messages
         m = self.propagate(edge_index, x=(transformed_source, target_x), edge_attr=edge_attr)
         
-        # Update Step: Concatenate current state and aggregated message (h || m)
+        # Concat features
         concat_features = torch.cat([target_x, m], dim=-1)
         
-        # 1. Apply MLP
+        # Apply MLP
         update = self.mlp(concat_features)
         
-        # 2. Add residual connection
+        # Add residual
         new_target_x = target_x + update
         
-        # 3. Apply LayerNorm (NEW)
+        # Apply norm
         new_target_x = self.norm(new_target_x)
         
         return new_target_x
 
     def message(self, x_j, edge_attr):
-        """
-        x_j: The source node features that have already been transformed by W.
-        edge_attr: The edge coefficients A_{vc}.
-        """
-        # Ensure edge_attr broadcasts correctly across the hidden dimensions
-        # Scales the transformed source features by the raw edge coefficient
+        """Constructs messages using edge attributes."""
+        # Scale message
         return x_j * edge_attr.view(-1, 1) 
 
 
 class BipartiteGNNBlock(nn.Module):
-    """
-    Executes one full block of message passing sequentially:
-    Step A: Constraints -> Variables
-    Step B: Variables -> Constraints
-    """
+    """Executes one full block of bipartite message passing."""
     def __init__(self, feature_embedding_size, gnn_mlp_dims, dropout=0.1):
+        """Initializes bidirectional update layers."""
         super().__init__()
-        self.cons_to_var = BipartiteUpdate(feature_embedding_size, gnn_mlp_dims, dropout=dropout) # Step A
-        self.var_to_cons = BipartiteUpdate(feature_embedding_size, gnn_mlp_dims, dropout=dropout) # Step B
+        self.cons_to_var = BipartiteUpdate(feature_embedding_size, gnn_mlp_dims, dropout=dropout)
+        self.var_to_cons = BipartiteUpdate(feature_embedding_size, gnn_mlp_dims, dropout=dropout)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        """Performs two-step message passing."""
         var_x = x_dict['variable']
         cons_x = x_dict['constraint']
 
-        # Step A: Constraints to Variables
+        # Step A
         edge_index_c2v = edge_index_dict[('constraint', 'to', 'variable')]
         edge_attr_c2v = edge_attr_dict[('constraint', 'to', 'variable')]
         
@@ -140,8 +122,7 @@ class BipartiteGNNBlock(nn.Module):
             edge_attr=edge_attr_c2v
         )
         
-        # Step B: Variables to Constraints
-        # Note: We use the *updated* variable features here, matching h_v^{(l+1)} in the formula
+        # Step B
         edge_index_v2c = edge_index_dict[('variable', 'to', 'constraint')]
         edge_attr_v2c = edge_attr_dict[('variable', 'to', 'constraint')]
         
@@ -156,16 +137,16 @@ class BipartiteGNNBlock(nn.Module):
 
 
 class StackedBipartiteGNN(nn.Module):
-    """
-    Stacks L layers of the BipartiteGNNBlock.
-    """
+    """Stacks multiple BipartiteGNNBlock layers."""
     def __init__(self, feature_embedding_size, gnn_mlp_dims, num_message_passing_layers, dropout=0.1):
+        """Initializes the stacked GNN layers."""
         super().__init__()
         self.layers = nn.ModuleList([
             BipartiteGNNBlock(feature_embedding_size, gnn_mlp_dims, dropout=dropout) for _ in range(num_message_passing_layers)
         ])
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        """Passes data through all GNN layers."""
         current_x_dict = x_dict
         
         for layer in self.layers:
@@ -173,84 +154,71 @@ class StackedBipartiteGNN(nn.Module):
             
         return current_x_dict
 class Decoder(nn.Module):
-    """
-    Isolates the relaxed constraints and predicts the final Lagrangian multipliers.
-    """
+    """Predicts final Lagrangian multipliers from relaxed constraints."""
     def __init__(self, feature_embedding_size, decoder_mlp_dims):
+        """Initializes decoder MLP."""
         super().__init__()
-        # Construct the full layer dimensions for the MLP:
-        # Input: feature_embedding_size
-        # Hidden layers: decoder_mlp_dims
-        # Output: 1
+        # Build MLP dims
         full_mlp_dims = [feature_embedding_size] + decoder_mlp_dims + [1]
-        # Reuse EncoderMLP as it implements the desired Linear-ReLU sequence for hidden layers
-        # and a final Linear layer without ReLU.
+        # Init MLP
         self.mlp = EncoderMLP(full_mlp_dims)
 
     def forward(self, cons_h, raw_cons_features):
-        """
-        cons_h: The hidden embeddings of the constraints after L message passing layers.
-        raw_cons_features: The original constraint features [rhs, eq, dualized, pi].
-        """
-        # Feature indices based on your initial extraction order:
-        # 0: rhs, 1: eq, 2: dualized, 3: pi
+        """Decodes hidden states into multiplier predictions."""
+        # Extract features
         eq_flags = raw_cons_features[:, 1]
         dualized_flags = raw_cons_features[:, 2]
         pi_vals = raw_cons_features[:, 3]
 
-        # 1. Filtering: Create a boolean mask for constraints where dualized == 1.0
-        # This implicitly drops all variables (since we only pass cons_h) and non-relaxed constraints
+        # Filter relaxed constraints
         mask = dualized_flags > 0.5
 
         filtered_h = cons_h[mask]
         filtered_pi = pi_vals[mask]
         filtered_eq = eq_flags[mask]
 
-        # 2. Residual Prediction (Delta pi)
+        # Predict residual
         delta_pi = self.mlp(filtered_h).squeeze(-1) 
 
-        # 3. Final Multiplier (Raw)
+        # Final multiplier
         lambda_raw = filtered_pi + delta_pi
 
         return lambda_raw, mask, filtered_eq
 
 
 class LagrangianMultiplierModel(nn.Module):
-    """
-    The complete model pipeline combining Encoders, Message Passing, and the Decoder.
-    """
+    """Complete model pipeline: Encoders, GNN, Decoder."""
     def __init__(self, feature_embedding_size=64, encoder_mlp_dims=[4, 64], gnn_mlp_dims=[64], num_message_passing_layers=3, dropout=0.1, decoder_mlp_dims=[]):
+        """Initializes all model components."""
         super().__init__()
         
-        # Dynamically append dimensions that depend on feature_embedding_size
+        # Build dims
         full_encoder_dims = encoder_mlp_dims + [feature_embedding_size]
         full_gnn_dims = [feature_embedding_size * 2] + gnn_mlp_dims + [feature_embedding_size]
             
-        # Step 1: Encoders
+        # Init encoders
         self.encoders = InitialNodeEncoders(encoder_mlp_dims=full_encoder_dims)
         
-        # Step 2: Message Passing Blocks
+        # Init GNN
         self.gnn = StackedBipartiteGNN(
             feature_embedding_size=feature_embedding_size, gnn_mlp_dims=full_gnn_dims, num_message_passing_layers=num_message_passing_layers, dropout=dropout
         )
         
-        # Step 3: Decoder
+        # Init decoder
         self.decoder = Decoder(feature_embedding_size=feature_embedding_size, decoder_mlp_dims=decoder_mlp_dims)
 
     def forward(self, data):
-        """
-        Takes the full PyG HeteroData object as input.
-        """
-        # Keep a reference to the original constraint features for the decoder
+        """Executes full forward pass on PyG HeteroData."""
+        # Save raw features
         raw_cons_features = data['constraint'].x
 
-        # 1. Encode
+        # Encode
         x_dict = self.encoders(data.x_dict)
 
-        # 2. Pass Messages
+        # Pass messages
         x_dict = self.gnn(x_dict, data.edge_index_dict, data.edge_attr_dict)
     
-        # 3. Decode
+        # Decode
         lambda_raw, dualized_mask, eq_flags = self.decoder(x_dict['constraint'], raw_cons_features)
 
         return lambda_raw, dualized_mask, eq_flags

@@ -1,3 +1,6 @@
+"""
+Runs experiments based on YAML config files and visualizes the results.
+"""
 import os
 import sys
 import yaml
@@ -5,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 def load_config(base_dir):
+    """Loads configuration from config_data.yaml."""
     config = {}
     config_path = base_dir / "config" / "config_data.yaml"
     if config_path.exists():
@@ -13,6 +17,7 @@ def load_config(base_dir):
     return config
 
 def main():
+    """Finds experiment files, runs them sequentially, and triggers visualization."""
     base_dir = Path(__file__).resolve().parent
     config = load_config(base_dir)
     tests_dir_name = config.get("orchestrator_settings", {}).get("tests_dir", str(base_dir / "tests"))
@@ -40,26 +45,26 @@ def main():
         env = os.environ.copy()
         env["EXPERIMENT_CONFIG"] = str(exp_file)
         
-        # Run the predict.py module
+        # Run experiment module
         cmd = [sys.executable, "-m", "src_ml.solve_instances"]
         
         try:
-            # We don't capture output here so the user can see predict.py's logs in real-time
+            # Run and stream output
             subprocess.run(cmd, env=env, cwd=base_dir, check=True)
             print(f"\n[+] Experiment {exp_file.name} completed successfully.\n")
         except subprocess.CalledProcessError as e:
             print(f"\n[!] Experiment {exp_file.name} failed with return code {e.returncode}.\n")
-            # Continuing with the next experiment even if this one failed
+            # Continue on failure
             continue
 
     print("All experiments finished.")
 
-    # Now run visualize_results.py
+    # Run visualize_results.py
     print("\n" + "="*80)
     print("Running visualize_results.py on all generated experiment results")
     print("="*80)
     
-    # Determine the json files
+    # Find JSON files
     base_config_path = base_dir / "config" / "config_test_base.yaml"
     base_json = "opt.json"
     if base_config_path.exists():

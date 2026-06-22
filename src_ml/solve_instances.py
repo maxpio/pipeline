@@ -1,13 +1,5 @@
 """
-Full end-to-end pipeline for batch instance processing:
-  1. Scan lp_dir for .lp files, optionally filter by prefix
-  2. For each instance: extract LP relaxation features (PySCIPOpt)
-  3. Build the bipartite graph and predict dual values with the trained GNN model
-  4. Save the predicted duals to a file
-  5. Run GCG with the custom pricing plugin that uses the predicted duals
-
-Usage:
-    python -m src_ml.solve_instances [--data-dir <dir>] [--lpfile-subdir <dir>]
+Full end-to-end pipeline for batch instance processing and prediction.
 """
 
 import os
@@ -22,9 +14,7 @@ from pyscipopt import Model as SCIPModel
 from torch_geometric.data import Batch
 import collections.abc
 
-# ---------------------------------------------------------------------------
-# Resolve project paths so imports work regardless of cwd
-# ---------------------------------------------------------------------------
+# Resolve paths
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(CURRENT_DIR)
 sys.path.append(BASE_DIR)
@@ -33,10 +23,9 @@ from src_ml.input_graph import create_bipartite_graph, create_bipartite_graph_fr
 from src_ml.model import LagrangianMultiplierModel
 from src_ml.single_runner import run_single_instance
 
-# ---------------------------------------------------------------------------
-# Load config.yaml (model architecture, defaults, etc.)
-# ---------------------------------------------------------------------------
+# Load config
 def deep_update(d, u):
+    """Recursively updates a dictionary."""
     if not u: return d
     for k, v in u.items():
         if isinstance(v, collections.abc.Mapping):
@@ -58,7 +47,7 @@ if exp_config and os.path.exists(exp_config):
     with open(exp_config, 'r') as f:
         deep_update(config, yaml.safe_load(f) or {})
 
-# Model Architecture from config
+# Model architecture
 FEATURE_EMBEDDING_SIZE = config['model_architecture']['feature_embedding_size']
 ENCODER_MLP_DIMS = config['model_architecture']['encoder_mlp_dims']
 GNN_MLP_DIMS = config['model_architecture']['gnn_mlp_dims']
@@ -71,20 +60,13 @@ DEFAULT_WEIGHTS_PATH = data_dir / "weights" / config['general_settings'].get('we
 DEFAULT_GCG_EXECUTABLE = Path(config['general_settings'].get('gcg_executable', "/home/max/gcg/build/gcg-linux-release/bin/gcg")).resolve()
 
 
-# ========================== STEP 1: Feature Extraction ==========================
+# Step 1: Feature extraction
 from src_ml.feature_extractor import extract_features_single
 
-# ========================== STEP 2: ML Prediction ==========================
+# Step 2: ML prediction
 
 def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) -> tuple[dict, str]:
-    """
-    Builds the bipartite graph from the feature dictionary, loads the trained
-    GNN model, and predicts Lagrangian dual multipliers.
-
-    Returns:
-        (mult_dict, dual_txt)  — a dict {constraint_name: value} and a
-        pre-formatted string ready to be written to a .txt file.
-    """
+    """Predicts Lagrangian dual multipliers using the GNN model."""
     if not quiet:
         print(f"[Step 2] Predicting dual values with ML model ({weights_path})")
     start = time.time()
@@ -94,7 +76,7 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
     # Build graph directly from dictionary
     graph_data = create_bipartite_graph_from_dict(feature_dict).to(device)
 
-    # --- Load model ---
+    # Load model
     model = LagrangianMultiplierModel(
         feature_embedding_size=FEATURE_EMBEDDING_SIZE,
         encoder_mlp_dims=ENCODER_MLP_DIMS,
@@ -107,14 +89,14 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
     model.load_state_dict(torch.load(weights_path, map_location=device))
     model.eval()
 
-    # --- Predict ---
+    # Predict
     all_cons_names = list(feature_dict.get("constraints", {}).keys())
 
     with torch.no_grad():
         batch_data = Batch.from_data_list([graph_data]).to(device)
         lambda_raw, dualized_mask, eq_flags = model(batch_data)
 
-        # Enforce non-negativity for inequality constraints
+        # Enforce non-negativity
         actual_multipliers = torch.where(eq_flags > 0.5, lambda_raw, torch.relu(lambda_raw))
 
     actual_multipliers = actual_multipliers.cpu().tolist()
@@ -123,7 +105,7 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
     dualized_cons_names = [name for j, name in enumerate(all_cons_names) if mask_list[j]]
     mult_dict = dict(zip(dualized_cons_names, actual_multipliers))
 
-    # Build the text representation matching the format GCG's plugin expects
+    # Build text
     lines = []
     for k, v in mult_dict.items():
         lines.append(f'"{k}": {v},')
@@ -136,7 +118,7 @@ def predict_duals(feature_dict: dict, weights_path: str, quiet: bool = False) ->
     return mult_dict, dual_txt
 
 
-# ========================== STEP 3: Run GCG ==========================
+# Step 3: Run GCG
 
 def run_gcg_with_duals(
     lp_file: Path,
@@ -150,10 +132,7 @@ def run_gcg_with_duals(
     print_solver_output: bool = True,
     quiet: bool = False
 ) -> tuple[str, dict]:
-    """
-    Constructs the GCG command string with the custom pricing plugin settings
-    and runs the solver.  Returns (status, metrics_dict).
-    """
+    """Runs GCG solver with custom duals."""
     if not quiet:
         print(f"[Step 3] Running GCG with predicted duals")
         print(f"  LP:   {lp_file}")
@@ -204,17 +183,17 @@ def run_gcg_with_duals(
     )
 
 
-# ========================== Parallel Workers ==========================
+# Parallel workers
 
 def _extract_wrapper(args_tuple):
-    """Worker for ProcessPoolExecutor — extracts features for one instance."""
+    """Extracts features for a single instance."""
     lp_path, dec_path = args_tuple
     maxrounds = config['feature_extraction'].get('presolving_maxrounds', 0)
     return extract_features_single(str(lp_path), str(dec_path), maxrounds=maxrounds, quiet=True, extract_lp_bound=False)
 
 
 def _gcg_wrapper(args_tuple):
-    """Worker for ProcessPoolExecutor — runs GCG for one instance."""
+    """Runs GCG for a single instance."""
     lp_f, dec_f, dual_f, gcg_exe, exp_params, tout, log_f, save_l = args_tuple
     return run_gcg_with_duals(
         lp_file=lp_f, dec_file=dec_f, dual_file=dual_f,
@@ -224,12 +203,10 @@ def _gcg_wrapper(args_tuple):
     )
 
 
-# ========================== Main ==========================
-
-# (resolve_instance_list has been removed as it was unused and deprecated)
-
+# Main
 
 def main():
+    """Main entry point for batch instance processing."""
     parser = argparse.ArgumentParser(
         description="End-to-end pipeline: extract features → predict duals → run GCG (batch mode)"
     )
@@ -293,7 +270,7 @@ def main():
     if not args.gcg.exists():
         sys.exit(f"Error: GCG executable not found: {args.gcg}")
 
-    # Resolve which instances to run
+    # Filter instances
     instance_files = sorted(list(lp_dir.glob("*.lp")))
     only_with_prefix = config.get('prediction_parameters', {}).get('only_with_prefix', "")
     if only_with_prefix:
@@ -302,7 +279,7 @@ def main():
     if not instance_files:
         sys.exit(f"Error: No .lp files found in {lp_dir}")
 
-    # Build (lp_file, dec_file) pairs, filtering out missing .dec files
+    # Build pairs
     instance_pairs = []
     for lp_file in instance_files:
         dec_file = dec_dir / f"{lp_file.stem}.dec"
@@ -327,9 +304,7 @@ def main():
     experiment_params = config.get('prediction_parameters', {}).get('gcg_settings', {})
     pipeline_start = time.time()
 
-    # ====================================================================
-    #  SINGLE-INSTANCE PATH  (no parallelization overhead)
-    # ====================================================================
+    # Single instance
     if not is_batch:
         lp_file, dec_file = instance_pairs[0]
         instance_name = lp_file.stem
@@ -398,16 +373,14 @@ def main():
         }]
         
     else:
-        # ====================================================================
-        #  BATCH PATH  (parallel feature extraction, batched GPU, parallel GCG)
-        # ====================================================================
+        # Batch processing
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
         use_custom_duals = str(experiment_params.get('use_custom_duals', 'TRUE')).upper() == 'TRUE'
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Load model once
+        # Load model
         is_prediction_needed = use_custom_duals and args.dualvalue_type == "predicted" and not args.skip_prediction
         if is_prediction_needed:
             model = LagrangianMultiplierModel(
@@ -450,7 +423,7 @@ def main():
                         d_file.touch()
                     dual_files[name] = d_file
             elif use_custom_duals:
-                # ---- Phase 1: Parallel feature extraction ----
+                # Phase 1: Extract features
                 print(f"  Phase 1: Extracting features ({num_cores} cores) ...")
                 phase1_start = time.time()
                 feature_dicts: dict[str, dict] = {}
@@ -472,7 +445,7 @@ def main():
                 phase1_elapsed = time.time() - phase1_start
                 print(f"    Done in {phase1_elapsed:.2f}s  ({len(feature_dicts)}/{n_chunk} succeeded)")
 
-                # ---- Phase 2: Batched GPU prediction ----
+                # Phase 2: Predict duals
                 print(f"  Phase 2: Predicting duals (GPU) ...")
                 phase2_start = time.time()
                 
@@ -491,7 +464,7 @@ def main():
                         lambda_raw, dualized_mask, eq_flags = model(batch_data)
                         actual_multipliers = torch.where(eq_flags > 0.5, lambda_raw, torch.relu(lambda_raw))
 
-                    # Un-batch predictions
+                    # Unbatch
                     actual_multipliers_cpu = actual_multipliers.cpu()
                     mask_cpu = dualized_mask.cpu()
                     
@@ -531,7 +504,7 @@ def main():
                     empty_dual.touch()
                     dual_files[name] = empty_dual
 
-            # ---- Phase 3: Parallel GCG solving ----
+            # Phase 3: Run GCG
             print(f"  Phase 3: Running GCG ({num_cores} cores) ...")
             phase3_start = time.time()
 
@@ -579,7 +552,7 @@ def main():
 
         pipeline_elapsed = time.time() - pipeline_start
 
-        # ---- Final Summary ----
+        # Final summary
         all_results.sort(key=lambda r: r['instance'])
 
         print(f"\n{'=' * 70}")

@@ -1,3 +1,6 @@
+"""
+Generates comparison plots and boxplots from experiment JSON results.
+"""
 import json
 import yaml
 import statistics
@@ -5,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 def load_config():
+    """Loads settings from configuration YAML files."""
     config = {}
     for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
         if Path(conf_file).exists():
@@ -13,6 +17,7 @@ def load_config():
     return config
 
 def main():
+    """Reads results and generates visualizations."""
     config = load_config()
     data_dir = Path(config.get('general_settings', {}).get('data_dir', '.'))
     exp_dir = data_dir / "experiments"
@@ -32,7 +37,7 @@ def main():
         print("No experiment files provided via args or in config.yaml under visualization_settings.experiment_files")
         return
 
-    # run_name -> {"total_time": float, "instances": {inst_name: dict}}
+    # Map runs to data
     data_by_run = {}
     
     for fname in files:
@@ -44,7 +49,7 @@ def main():
             d = json.load(f)
             
         run_name = fname.replace(".json", "")
-        # Parse instances into a dict keyed by instance name
+        # Parse instances
         inst_dict = {
             inst["instance"]: inst 
             for inst in d.get("instances", []) 
@@ -62,7 +67,7 @@ def main():
     run_names = list(data_by_run.keys())
     plot_width = max(10, len(run_names) * 1.5)
     
-    # 1. Plot total wall clock time
+    # Plot total time
     plt.figure(figsize=(plot_width, 6))
     times = [data_by_run[r]["total_time"] for r in run_names]
     plt.bar(run_names, times, color='skyblue')
@@ -74,7 +79,7 @@ def main():
     plt.close()
     print(f"Saved {vis_dir / 'total_wall_clock_time.png'}")
 
-    # Metrics to plot: (JSON key, Display Name)
+    # Set metrics
     metrics_to_plot = [
         ("solving_time", "Runtime per Instance (s)"),
         ("slp_iterations_main_loop", "SLP Iterations Main Loop"),
@@ -82,14 +87,14 @@ def main():
         ("cols_needed_for_rmp_feasibility", "Columns Needed for RMP Feasibility")
     ]
 
-    # Pre-process derived metrics
+    # Calc derived metrics
     for run in run_names:
         for inst_name, inst_data in data_by_run[run]["instances"].items():
             slp_main = inst_data.get("slp_iterations_main_loop", 0)
             slp_custom = inst_data.get("slp_iterations_custom_pricing", 0)
             inst_data["total_slp_iters"] = slp_main + slp_custom
 
-    # Find intersection of successful instances
+    # Get common instances
     all_instances = set()
     for i, run in enumerate(run_names):
         insts = set(data_by_run[run]["instances"].keys())
@@ -105,7 +110,7 @@ def main():
         print("No common instances found across runs. Cannot create boxplots.")
         return
 
-    # Boxplots per metric
+    # Create boxplots
     for metric_key, metric_name in metrics_to_plot:
         
         abs_data = []
@@ -115,7 +120,7 @@ def main():
             
         safe_name = metric_name.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
         
-        # Absolute Boxplot
+        # Abs boxplot
         means_abs = [sum(vals)/len(vals) if len(vals) > 0 else 0 for vals in abs_data]
         medians_abs = [statistics.median(vals) if len(vals) > 0 else 0 for vals in abs_data]
         sorted_indices = sorted(range(len(means_abs)), key=lambda k: means_abs[k])
@@ -133,7 +138,7 @@ def main():
         plt.close()
         print(f"Saved {vis_dir / f'{safe_name}_absolute.png'}")
         
-        # Normalized Boxplot (divided by the worst/max value per instance)
+        # Norm boxplot
         norm_data = [[] for _ in run_names]
         for inst_idx, _ in enumerate(all_instances):
             vals_for_inst = [abs_data[run_idx][inst_idx] for run_idx in range(len(run_names))]

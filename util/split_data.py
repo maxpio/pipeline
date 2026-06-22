@@ -1,3 +1,6 @@
+"""
+Splits .lp files into training, validation, and test sets based on configuration.
+"""
 import os
 import glob
 import random
@@ -5,6 +8,7 @@ import shutil
 import yaml
 
 def read_config():
+    """Reads configuration from YAML files."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config = {}
     for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
@@ -16,6 +20,7 @@ def read_config():
     return config
 
 def main():
+    """Executes the data splitting process."""
     config = read_config()
     try:
         data_dir = config["general_settings"]["data_dir"]
@@ -29,14 +34,14 @@ def main():
     val_ratio = split_config.get("val_ratio", 0.1)
     test_ratio = split_config.get("test_ratio", 0.1)
     
-    # Verify split ratios sum to approximately 1.0
+    # Verify ratios sum to 1
     if not abs((train_ratio + val_ratio + test_ratio) - 1.0) < 1e-9:
         print(f"Warning: Split ratios do not sum to 1.0 (sum: {train_ratio + val_ratio + test_ratio})")
 
     if not os.path.isdir(lpfiles_dir):
         raise FileNotFoundError(f"lp_dir not found: {lpfiles_dir}")
         
-    # Get all .lp files
+    # Get .lp files
     lp_files = glob.glob(os.path.join(lpfiles_dir, "*.lp"))
     if not lp_files:
         print(f"No .lp files found in {lpfiles_dir}")
@@ -44,11 +49,11 @@ def main():
         
     print(f"Found {len(lp_files)} .lp files in {lpfiles_dir}")
     
-    # Shuffle files with a seed for reproducibility
+    # Shuffle files
     random.seed(random_seed)
     random.shuffle(lp_files)
     
-    # Define split ratios
+    # Calc split sizes
     n_files = len(lp_files)
     train_end = int(n_files * train_ratio)
     val_end = train_end + int(n_files * val_ratio)
@@ -59,12 +64,12 @@ def main():
         "test": lp_files[val_end:]
     }
     
-    # Copy files to destination directories inside lpfiles
+    # Copy files
     for split_name, files in splits.items():
         split_dir = os.path.join(lpfiles_dir, split_name)
         os.makedirs(split_dir, exist_ok=True)
         
-        # Clean any existing files in directory to start fresh (optional but recommended for clean runs)
+        # Clean dir
         for existing_file in glob.glob(os.path.join(split_dir, "*.lp")):
             os.remove(existing_file)
             

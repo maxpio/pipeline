@@ -1,3 +1,6 @@
+"""
+Executes single instances of GCG and parses their outputs.
+"""
 import subprocess
 import time
 import re
@@ -8,13 +11,8 @@ import os
 from pathlib import Path
 
 def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_executable: Path, cmd_string: str, timeout: int, log_file: Path, save_logs: bool = True, print_solver_output: bool = False) -> tuple[str, dict]:
-    """
-    Runs a single GCG instance using a provided SCIP command string.
-    
-    Returns a tuple of (status, metrics) where status is a string (e.g., "SUCCESS") 
-    and a metrics dictionary with solving_time, final_dual_bound, final_primal_bound, and other metrics.
-    """
-    # Ensure all required files exist before running
+    """Runs a single GCG instance and extracts performance metrics."""
+    # Check files
     if not lp_file.exists():
         print(f"Error: Missing LP file at {lp_file}")
         return "MISSING_FILES", {"final_dual_bound": float('inf'), "solving_time": 0.0}
@@ -25,17 +23,16 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
         print(f"Error: Missing DUAL file at {dual_file}")
         return "MISSING_FILES", 0.0, float('inf'), 0
         
-    # Ensure the directory for the log file exists
+    # Check log dir
     if save_logs:
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Generate a unique temporary JSON file for GCG to write metrics into.
-    # We close the fd immediately — GCG (C++) will be the one writing to it.
+    # Create temp metrics file
     metrics_fd, metrics_path = tempfile.mkstemp(suffix=".json", prefix="gcg_metrics_")
     os.close(metrics_fd)
 
     try:
-        # Prepend the metrics_file setting so GCG knows where to write the JSON.
+        # Prepend metrics path
         full_cmd_string = (
             f'set pricingcb initduals metrics_file {metrics_path}\n'
             + cmd_string
@@ -51,16 +48,17 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 [str(gcg_executable), "-b", batch_file_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, # Prevents hanging if SCIP drops to interactive shell
+                stdin=subprocess.DEVNULL, # Prevent hanging
                 text=True
             )
                     
             output_lines = []
             def reader_thread(pipe):
+                """Reads and optionally prints stdout."""
                 for line in pipe:
                     output_lines.append(line)
                     if print_solver_output:
-                        # flush=True forces Python to immediately print the line to the console
+                        # Flush output
                         print(line, end="", flush=True)
                         
             if print_solver_output:
@@ -77,7 +75,7 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 process.kill()
                 process.wait()
 
-            t.join() # Wait for the reader thread to finish
+            t.join() # Wait for reader
             real_runtime = time.perf_counter() - start_time
             full_output = "".join(output_lines)
 
@@ -93,7 +91,7 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
             if print_solver_output:
                 print(f"\n--- SCIP OUTPUT END ({lp_file.name}) ---\n")
 
-            # Fetch the metrics from JSON written by GCG's InitDuals exitSol callback
+            # Fetch metrics
             try:
                 with open(metrics_path, "r") as mf:
                     gcg_metrics = json.load(mf)
@@ -117,8 +115,7 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 slp_iters_custom = int(gcg_metrics.get("slp_iterations_custom_pricing", 0))
 
             except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
-                # Should not happen: GCG writes this file in exitSol before quitting.
-                # If it does, it means GCG crashed hard before exitSol ran.
+                # Fallback on crash
                 print(f"  [!] Warning: could not read GCG metrics JSON ({e}). Bounds will be reported as inf.")
                 solving_time = real_runtime
                 final_dual_bound = float('inf')
@@ -127,7 +124,7 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 slp_iters_main = 0
                 slp_iters_custom = 0
 
-            # Fallback parsing from stdout for bounds only
+            # Parse stdout
             if final_dual_bound == float('inf'):
                 m = re.search(r"Dual Bound\s*:\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?|[+-]?inf(?:inite|inity)?)", full_output, re.IGNORECASE)
                 if m:
@@ -170,5 +167,5 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
         return "CRASH", float(timeout), float('inf'), 0
 
     finally:
-        # Always clean up the temporary metrics file
+        # Cleanup
         Path(metrics_path).unlink(missing_ok=True)
