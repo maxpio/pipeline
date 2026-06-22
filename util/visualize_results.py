@@ -22,7 +22,11 @@ def main():
     if len(sys.argv) > 1:
         files = sys.argv[1:]
     else:
-        files = config.get('visualization_settings', {}).get('experiment_files', [])
+        vis_settings = config.get('visualization_settings', {})
+        if vis_settings.get('process_all', False):
+            files = [f.name for f in exp_dir.glob("*.json")]
+        else:
+            files = vis_settings.get('experiment_files', [])
     
     if not files:
         print("No experiment files provided via args or in config.yaml under visualization_settings.experiment_files")
@@ -56,14 +60,15 @@ def main():
         return
 
     run_names = list(data_by_run.keys())
+    plot_width = max(10, len(run_names) * 1.5)
     
     # 1. Plot total wall clock time
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(plot_width, 6))
     times = [data_by_run[r]["total_time"] for r in run_names]
     plt.bar(run_names, times, color='skyblue')
     plt.ylabel("Total Wall-Clock Time (s)")
     plt.title("Total Pipeline Execution Time Comparison")
-    plt.xticks(rotation=45, ha='right')
+    plt.xticks(rotation=90, ha='right')
     plt.tight_layout()
     plt.savefig(vis_dir / "total_wall_clock_time.png")
     plt.close()
@@ -118,11 +123,11 @@ def main():
         sorted_abs_data = [abs_data[i] for i in sorted_indices]
         sorted_run_names_abs = [f"{run_names[i]}\nMean: {means_abs[i]:.2f}\nMed: {medians_abs[i]:.2f}" for i in sorted_indices]
         
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(plot_width, 8))
         plt.boxplot(sorted_abs_data, tick_labels=sorted_run_names_abs, showmeans=True)
         plt.ylabel(metric_name)
         plt.title(f"{metric_name} - Absolute Values")
-        plt.xticks(rotation=45, ha='center')
+        plt.xticks(rotation=90, ha='center')
         plt.tight_layout()
         plt.savefig(vis_dir / f"{safe_name}_absolute.png")
         plt.close()
@@ -149,11 +154,11 @@ def main():
         sorted_norm_data = [norm_data[i] for i in sorted_indices_norm]
         sorted_run_names_norm = [f"{run_names[i]}\nMean: {means_norm[i]:.2f}\nMed: {medians_norm[i]:.2f}" for i in sorted_indices_norm]
                 
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(plot_width, 8))
         plt.boxplot(sorted_norm_data, tick_labels=sorted_run_names_norm, showmeans=True)
         plt.ylabel(f"Normalized {metric_name} (relative to worst)")
         plt.title(f"{metric_name} - Normalized")
-        plt.xticks(rotation=45, ha='center')
+        plt.xticks(rotation=90, ha='center')
         plt.tight_layout()
         plt.savefig(vis_dir / f"{safe_name}_normalized.png")
         plt.close()

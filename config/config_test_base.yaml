@@ -5,7 +5,7 @@ prediction_parameters:
   dualvalue_type: "optimal"
   experiment_json_name: "opt.json"
   skip_prediction: True
-  only_with_prefix: "gapdcstm_40_400_4"  # Only instances with this prefix are processed. If empty, all are processed.
+  only_with_prefix: ""  # Only instances with this prefix are processed. If empty, all are processed.
   
   gcg_settings:
     use_custom_duals: True
@@ -19,7 +19,7 @@ prediction_parameters:
     smoothing_weight_start: 0.99
     smoothing_weight_factor: 0.4
     smoothing_weight_min: 0.01
-    smoothing_improvement_threshold: 200.0
+    smoothing_improvement_threshold: 10.0
     n_perturbation_rounds: 0
     perturbation_percent: 0.007
     add_round_0_columns: False

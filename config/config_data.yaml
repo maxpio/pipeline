@@ -9,11 +9,11 @@ duals_generation_settings:
   process_splits: False
   prefix_filter: ""
   generate_subopt: True
-  subopt_percent: 0.995
+  subopt_percent: 0.997
   generate_random: True
   random_gauss_sigma: 5.0
-  multicore_solving: False
-  max_iters: 400
+  multicore_solving: True
+  max_iters: 500
   initial_step_size: 5.0
   no_improve_limit: 10
   step_size_shrink: 0.5
@@ -21,6 +21,7 @@ duals_generation_settings:
 
 # --- Visualization Script Settings ---
 visualization_settings:
+  process_all: True
   experiment_files:
     -  "raw.json"
     -  "opt.json"
