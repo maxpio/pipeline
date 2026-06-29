@@ -140,14 +140,21 @@ def main():
         
         # Norm boxplot
         norm_data = [[] for _ in run_names]
+        normalized_by_file = vis_settings.get('normalized_by', "")
+        norm_run_name = normalized_by_file.replace(".json", "") if normalized_by_file else ""
+        
         for inst_idx, _ in enumerate(all_instances):
             vals_for_inst = [abs_data[run_idx][inst_idx] for run_idx in range(len(run_names))]
-            worst_val = max(vals_for_inst)
+            
+            if norm_run_name and norm_run_name in run_names:
+                base_val = abs_data[run_names.index(norm_run_name)][inst_idx]
+            else:
+                base_val = max(vals_for_inst)
             
             for run_idx in range(len(run_names)):
                 val = vals_for_inst[run_idx]
-                if worst_val > 0:
-                    norm_val = val / worst_val
+                if base_val > 0:
+                    norm_val = val / base_val
                 else:
                     norm_val = 0.0
                 norm_data[run_idx].append(norm_val)
@@ -161,7 +168,11 @@ def main():
                 
         plt.figure(figsize=(plot_width, 8))
         plt.boxplot(sorted_norm_data, tick_labels=sorted_run_names_norm, showmeans=True)
-        plt.ylabel(f"Normalized {metric_name} (relative to worst)")
+        
+        if norm_run_name and norm_run_name in run_names:
+            plt.ylabel(f"Normalized {metric_name} (relative to {normalized_by_file})")
+        else:
+            plt.ylabel(f"Normalized {metric_name} (relative to worst)")
         plt.title(f"{metric_name} - Normalized")
         plt.xticks(rotation=90, ha='center')
         plt.tight_layout()

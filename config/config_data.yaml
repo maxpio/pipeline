@@ -22,6 +22,7 @@ duals_generation_settings:
 # --- Visualization Script Settings ---
 visualization_settings:
   process_all: True  # If true, visualizes all JSON results in the experiments folder
+  normalized_by: ""  # If empty, normalizes by the worst value. Otherwise, uses the specified file (e.g., "opt.json") as the base for normalization
   experiment_files:  # List of specific experiment JSON files to visualize (used if process_all is false)
     -  "raw.json"
     -  "opt.json"

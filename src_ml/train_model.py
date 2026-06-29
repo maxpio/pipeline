@@ -22,9 +22,6 @@ from src_ml.model import LagrangianMultiplierModel
 from src_ml.loss_mc import BatchedSubgradientLoss, worker_init
 from src_ml.feature_extractor import extract_features_single
 
-# Deactivated import
-# from util.evaluate_results import main as evaluate_main
-
 # Config
 
 # Load config
