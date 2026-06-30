@@ -24,10 +24,10 @@ def main():
     vis_dir = data_dir / "visualizations"
     vis_dir.mkdir(parents=True, exist_ok=True)
     import sys
+    vis_settings = config.get('visualization_settings', {})
     if len(sys.argv) > 1:
         files = sys.argv[1:]
     else:
-        vis_settings = config.get('visualization_settings', {})
         if vis_settings.get('process_all', False):
             files = [f.name for f in exp_dir.glob("*.json")]
         else:
