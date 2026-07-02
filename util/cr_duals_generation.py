@@ -18,7 +18,7 @@ from feature_extractor import get_master_constraints
 # Paths and Settings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config_full = {}
-for conf_file in ["config/config_general.yaml", "config/config_data.yaml"]:
+for conf_file in ["config/config_general.yaml", "config/config_data.yaml", "config/config_test_base.yaml"]:
     config_path = os.path.abspath(os.path.join(BASE_DIR, "..", conf_file))
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
@@ -119,16 +119,28 @@ def process_instance(lp_file):
 if __name__ == "__main__":
     os.makedirs(CR_DUAL_VALUES_DIR, exist_ok=True)
         
-    if PROCESS_SPLITS:
-        lp_files = []
-        for split in ['training', 'val', 'test']:
-            lp_files.extend(glob.glob(os.path.join(LP_DIR, split, "*.lp")))
-        if not lp_files:
-            print(f"No .lp files found in subdirectories (training, val, test) of {LP_DIR}")
-    else:
+    lpfile_subdir = config_full.get("prediction_parameters", {}).get("lpfile_subdir")
+    
+    if lpfile_subdir == "":
         lp_files = glob.glob(os.path.join(LP_DIR, "*.lp"))
         if not lp_files:
             print(f"No .lp files found in {LP_DIR}")
+    elif lpfile_subdir is not None:
+        target_dir = os.path.join(LP_DIR, lpfile_subdir)
+        lp_files = glob.glob(os.path.join(target_dir, "*.lp"))
+        if not lp_files:
+            print(f"No .lp files found in {target_dir}")
+    else:
+        if PROCESS_SPLITS:
+            lp_files = []
+            for split in ['training', 'val', 'test']:
+                lp_files.extend(glob.glob(os.path.join(LP_DIR, split, "*.lp")))
+            if not lp_files:
+                print(f"No .lp files found in subdirectories (training, val, test) of {LP_DIR}")
+        else:
+            lp_files = glob.glob(os.path.join(LP_DIR, "*.lp"))
+            if not lp_files:
+                print(f"No .lp files found in {LP_DIR}")
         
     if PREFIX_FILTER:
         lp_files = [f for f in lp_files if os.path.basename(f).startswith(PREFIX_FILTER)]

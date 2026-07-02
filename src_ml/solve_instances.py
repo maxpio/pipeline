@@ -541,8 +541,8 @@ def main():
                             "instance": name, "status": "CRASH",
                             "solving_time": 0.0, "final_dual_bound": float('inf'), "final_primal_bound": float('inf'),
                             "cols_needed_for_rmp_feasibility": 0,
-                            "slp_iterations_main_loop": 0,
-                            "slp_iterations_custom_pricing": 0,
+                            "slp_iterations_non_pricing": 0,
+                            "slp_iterations_pricing": 0,
                         })
                         print(f"    [{done_count}/{len(gcg_tasks)}] {name:30s}  CRASHED: {exc}")
 

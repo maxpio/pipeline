@@ -1,7 +1,7 @@
 # --- Prediction Script Parameters ---
 prediction_parameters:
   timeout: 3600  # Maximum solving time per instance in seconds
-  lpfile_subdir: "test"  # Subdirectory of LP files to evaluate on (e.g. test, val, train)
+  lpfile_subdir: ""  # Subdirectory of LP files to evaluate on (e.g. test, val, train)
   dualvalue_type: "optimal"  # Type of duals to fetch or predict (e.g., optimal, predicted, random)
   experiment_json_name: "opt.json"  # Name of the output JSON file storing the experiment metrics
   skip_prediction: True  # If true, skips ML prediction and uses existing saved dual files
@@ -12,9 +12,9 @@ prediction_parameters:
     disable_heuristics: True  # If true, disables SCIP/GCG heuristics
     disable_presolving: True  # If true, disables SCIP/GCG presolving
     disable_separating_cliques: True  # If true, disables clique separation in SCIP
-    disable_subprob_presolve_heur: True  # If true, disables presolving and heuristics in pricing subproblems
+    disable_subprob_presolve_heur: False  # If true, disables presolving and heuristics in pricing subproblems
     masterpricer_stabilization: False  # If true, activates GCG's built-in master pricer stabilization
-    solve_root_only: False  # If true, limits solving to the root node only (nodes limit 1)
+    solve_root_only: True  # If true, limits solving to the root node only (nodes limit 1)
     use_smoothing: True  # If true, uses dual smoothing in the custom pricing plugin
     smoothing_weight_start: 0.99  # Initial smoothing weight alpha for the dual smoothing formula
     smoothing_weight_factor: 0.4  # Multiplicative factor to update smoothing weight after improvements

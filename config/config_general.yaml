@@ -1,6 +1,6 @@
 # --- General Settings ---
 general_settings:
-  data_dir: "/home/max/master_ths/data/GAD"  # Root directory containing dataset files
+  data_dir: "/home/max/master_ths/data/GAPD"  # Root directory containing dataset files
   gcg_executable: "/home/max/gcg/build/gcg-linux-release/bin/gcg"  # Path to the GCG solver binary
   weights_filename: "gaptest1.pth"  # Filename for saving/loading trained model weights
   num_cores: 3  # Number of CPU cores to use for multiprocessing tasks

@@ -111,8 +111,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                     final_primal_bound = float(final_primal_bound)
                     
                 cols_needed = int(gcg_metrics.get("cols_needed_for_rmp_feasibility", 0))
-                slp_iters_main = int(gcg_metrics.get("slp_iterations_main_loop", 0))
-                slp_iters_custom = int(gcg_metrics.get("slp_iterations_custom_pricing", 0))
+                slp_iters_non_pricing = int(gcg_metrics.get("slp_iterations_non_pricing", 0))
+                slp_iters_pricing = int(gcg_metrics.get("slp_iterations_pricing", 0))
 
             except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
                 # Fallback on crash
@@ -121,8 +121,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 final_dual_bound = float('inf')
                 final_primal_bound = float('inf')
                 cols_needed = 0
-                slp_iters_main = 0
-                slp_iters_custom = 0
+                slp_iters_non_pricing = 0
+                slp_iters_pricing = 0
 
             # Parse stdout
             if final_dual_bound == float('inf'):
@@ -156,8 +156,8 @@ def run_single_instance(lp_file: Path, dec_file: Path, dual_file: Path, gcg_exec
                 "final_primal_bound": final_primal_bound,
                 "solving_time": solving_time,
                 "cols_needed_for_rmp_feasibility": cols_needed,
-                "slp_iterations_main_loop": slp_iters_main,
-                "slp_iterations_custom_pricing": slp_iters_custom
+                "slp_iterations_non_pricing": slp_iters_non_pricing,
+                "slp_iterations_pricing": slp_iters_pricing
             }
 
             return status, metrics

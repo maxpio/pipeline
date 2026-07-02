@@ -65,6 +65,7 @@ def main():
         return
 
     run_names = list(data_by_run.keys())
+    run_names.sort(key=lambda r: data_by_run[r]["total_time"])
     plot_width = max(10, len(run_names) * 1.5)
     
     # Plot total time
@@ -82,17 +83,18 @@ def main():
     # Set metrics
     metrics_to_plot = [
         ("solving_time", "Runtime per Instance (s)"),
-        ("slp_iterations_main_loop", "SLP Iterations Main Loop"),
-        ("total_slp_iters", "SLP Iterations Main Loop + Custom Pricing"),
+        ("slp_iterations_non_pricing", "SLP Iterations Non-Pricing"),
+        ("slp_iterations_pricing", "SLP Iterations Pricing"),
+        ("slp_total_slp_iters", "SLP Iterations Total"),
         ("cols_needed_for_rmp_feasibility", "Columns Needed for RMP Feasibility")
     ]
 
     # Calc derived metrics
     for run in run_names:
         for inst_name, inst_data in data_by_run[run]["instances"].items():
-            slp_main = inst_data.get("slp_iterations_main_loop", 0)
-            slp_custom = inst_data.get("slp_iterations_custom_pricing", 0)
-            inst_data["total_slp_iters"] = slp_main + slp_custom
+            slp_non_pricing = inst_data.get("slp_iterations_non_pricing", 0)
+            slp_pricing = inst_data.get("slp_iterations_pricing", 0)
+            inst_data["slp_total_slp_iters"] = slp_non_pricing + slp_pricing
 
     # Get common instances
     all_instances = set()
